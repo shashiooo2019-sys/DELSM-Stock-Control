@@ -482,7 +482,11 @@ export default function DelhiStationInventoryApp() {
     updateDb(newDb);
     if (updatedItem) {
       saveStockMasterToFirestore(updatedItem);
-      alert("Photo Stored Locally");
+      if (base64Str) {
+        alert("Photo Saved to Cloud Database!");
+      } else {
+        alert("Photo deleted from Cloud Database!");
+      }
     }
     if (activePhotoModalArticle && activePhotoModalArticle.article_number === articleNumber) {
       const updated = updatedMaster.find(m => m.article_number === articleNumber) || null;
@@ -931,6 +935,7 @@ export default function DelhiStationInventoryApp() {
       ...db,
       stockMaster: nextMaster
     });
+    saveStockMasterToFirestore(finalArticle);
     setIsArticleModalOpen(false);
     setEditingArticle(null);
     playBeep();
@@ -6345,9 +6350,9 @@ export default function DelhiStationInventoryApp() {
 
                   <div className="text-center">
                     <p className="text-xs font-bold text-slate-700">
-                      {activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url ? "Photo Stored Locally" : "No Photo Attached"}
+                      {activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url ? "Photo Saved in Cloud Database" : "No Photo Attached"}
                     </p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Compressed & saved in browser storage (max 800x800px)</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Synced & saved in Firestore database</p>
                   </div>
                 </div>
               )}
@@ -6378,7 +6383,7 @@ export default function DelhiStationInventoryApp() {
                   className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs p-2.5 rounded-lg border border-red-200 transition flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
-                  Delete Stored Photo
+                  Delete Photo from Database
                 </button>
               )}
             </div>
