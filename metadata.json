@@ -1,0 +1,10 @@
+{
+  "name": "Remix: Delhi Station Inventory \u0026 Reordering System",
+  "description": "Multi-tier packaging stock tracker, barcode scanning, multi-location lookup, and smart reorder dashboard for Delhi Station.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

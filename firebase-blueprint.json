@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "StockMaster": {
+      "collectionName": "stockMaster",
+      "fields": {
+        "article_number": { "type": "string" },
+        "description": { "type": "string" },
+        "barcode": { "type": "string" },
+        "smallest_unit_name": { "type": "string" },
+        "units_per_box": { "type": "number" },
+        "boxes_per_pack": { "type": "number" },
+        "estimated_monthly_usage": { "type": "number" },
+        "min_quantity": { "type": "number" },
+        "reorder_level": { "type": "number" },
+        "max_quantity": { "type": "number" },
+        "total_stock_quantity": { "type": "number" },
+        "order_frequency_days": { "type": "number" },
+        "order_volume": { "type": "number" },
+        "ordering_channel": { "type": "string" },
+        "lead_time_days": { "type": "number" },
+        "image_url": { "type": "string" },
+        "location": { "type": "string" }
+      }
+    },
+    "StockTakingLog": {
+      "collectionName": "stockTakingLogs",
+      "fields": {
+        "log_id": { "type": "string" },
+        "article_number": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "input_type": { "type": "string" },
+        "input_count": { "type": "number" },
+        "actual_quantity_units": { "type": "number" },
+        "expected_quantity_units": { "type": "number" },
+        "discrepancy_units": { "type": "number" },
+        "discrepancy_status": { "type": "string" }
+      }
+    },
+    "PurchaseOrder": {
+      "collectionName": "purchaseOrders",
+      "fields": {
+        "po_number": { "type": "string" },
+        "article_number": { "type": "string" },
+        "order_date": { "type": "string" },
+        "approval_date": { "type": "string" },
+        "expected_delivery_date": { "type": "string" },
+        "order_quantity_units": { "type": "number" },
+        "status": { "type": "string" }
+      }
+    }
+  },
+  "securityRules": {
+    "allowRead": "true",
+    "allowWrite": "true"
+  }
+}

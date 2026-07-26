@@ -1,0 +1,4 @@
+  qty = isNaN(qty) ? 0 : qty;
+  unitsPerBox = isNaN(unitsPerBox) ? 1 : unitsPerBox;
+  boxesPerPack = isNaN(boxesPerPack) ? 1 : boxesPerPack;
+  const unitsPerPack = unitsPerBox * boxesPerPack;
