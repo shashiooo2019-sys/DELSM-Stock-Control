@@ -6,7 +6,8 @@ import {
   onSnapshot, 
   writeBatch 
 } from 'firebase/firestore';
-import { db as firestoreDb } from './firebase';
+import { signInAnonymously } from 'firebase/auth';
+import { db as firestoreDb, auth } from './firebase';
 
 // Internal ID helper
 function generateId(prefix: string): string {
@@ -424,10 +425,18 @@ export function saveDatabase(data: {
 
 export async function saveStockMasterToFirestore(item: StockMaster) {
   try {
+    if (typeof window !== 'undefined' && !auth.currentUser) {
+      try {
+        await signInAnonymously(auth);
+      } catch (authErr) {
+        console.warn('Anonymous auth before Firestore save failed:', authErr);
+      }
+    }
     const docRef = doc(firestoreDb, 'stockMaster', item.article_number);
     await setDoc(docRef, item, { merge: true });
   } catch (err) {
     console.error('Error saving StockMaster to Firestore:', err);
+    throw err;
   }
 }
 

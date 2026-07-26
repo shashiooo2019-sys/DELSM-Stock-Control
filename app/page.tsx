@@ -51,7 +51,9 @@ import {
   Upload,
   Maximize2,
   Save,
-  FileText
+  FileText,
+  CloudUpload,
+  AlertCircle
 } from 'lucide-react';
 import {
   StockMaster,
@@ -352,6 +354,9 @@ export default function DelhiStationInventoryApp() {
 
   // Location search selected article
   const [activePhotoModalArticle, setActivePhotoModalArticle] = useState<StockMaster | null>(null);
+  const [stagedPhotoBase64, setStagedPhotoBase64] = useState<string | null>(null);
+  const [isSavingPhoto, setIsSavingPhoto] = useState<boolean>(false);
+  const [photoSuccessMsg, setPhotoSuccessMsg] = useState<string | null>(null);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const photoVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -453,7 +458,8 @@ export default function DelhiStationInventoryApp() {
       rCtx.drawImage(canvas, 0, 0, w, h);
     }
     const dataUrl = resizedCanvas.toDataURL('image/webp', 0.8);
-    updateArticlePhoto(activePhotoModalArticle.article_number, dataUrl);
+    setStagedPhotoBase64(dataUrl);
+    setPhotoSuccessMsg("Photo snapped! Click 'Save to Firebase Database' below to persist.");
     stopPhotoCamera();
   };
 
@@ -462,10 +468,111 @@ export default function DelhiStationInventoryApp() {
     if (!file || !activePhotoModalArticle) return;
     try {
       const compressedBase64 = await compressImageFile(file);
-      updateArticlePhoto(activePhotoModalArticle.article_number, compressedBase64);
+      setStagedPhotoBase64(compressedBase64);
+      setPhotoSuccessMsg("Photo uploaded! Click 'Save to Firebase Database' below to persist.");
     } catch (err) {
       console.error("Error processing file:", err);
       alert("Error processing image file.");
+    }
+  };
+
+  const handleSavePhotoToFirebase = async () => {
+    if (!activePhotoModalArticle) return;
+    const photoToSave = stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url;
+    if (!photoToSave) {
+      alert("No photo available to save.");
+      return;
+    }
+
+    setIsSavingPhoto(true);
+    setPhotoSuccessMsg(null);
+    try {
+      let savedServerUrl = photoToSave;
+      if (photoToSave.startsWith('data:image')) {
+        const uploadRes = await fetch('/api/upload-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            article_number: activePhotoModalArticle.article_number,
+            image_base64: photoToSave
+          })
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadData.success && uploadData.image_url) {
+          savedServerUrl = uploadData.image_url;
+        }
+      }
+
+      let updatedItem: StockMaster | undefined;
+      const updatedMaster = db.stockMaster.map(item => {
+        if (item.article_number === activePhotoModalArticle.article_number) {
+          updatedItem = { 
+            ...item, 
+            image_url: savedServerUrl, 
+            image_base64: savedServerUrl.startsWith('data:') ? savedServerUrl : undefined
+          };
+          return updatedItem;
+        }
+        return item;
+      });
+
+      const newDb = { ...db, stockMaster: updatedMaster };
+      updateDb(newDb);
+
+      if (updatedItem) {
+        await saveStockMasterToFirestore(updatedItem);
+        setStagedPhotoBase64(null);
+        setActivePhotoModalArticle(updatedItem);
+        setPhotoSuccessMsg("Photo saved to App Files & Firebase Database!");
+        setTimeout(() => setPhotoSuccessMsg(null), 5000);
+      }
+    } catch (err: any) {
+      console.error("Failed to save image to Server/Firebase:", err);
+      alert("Failed to save image to server or Firebase database.");
+    } finally {
+      setIsSavingPhoto(false);
+    }
+  };
+
+  const handleDeletePhotoFromFirebase = async () => {
+    if (!activePhotoModalArticle) return;
+    if (!confirm("Are you sure you want to delete this photo from App Files & Firebase Database?")) return;
+
+    setIsSavingPhoto(true);
+    setPhotoSuccessMsg(null);
+    try {
+      await fetch(`/api/upload-image?article_number=${encodeURIComponent(activePhotoModalArticle.article_number)}`, {
+        method: 'DELETE'
+      });
+
+      let updatedItem: StockMaster | undefined;
+      const updatedMaster = db.stockMaster.map(item => {
+        if (item.article_number === activePhotoModalArticle.article_number) {
+          updatedItem = { 
+            ...item, 
+            image_base64: undefined, 
+            image_url: undefined 
+          };
+          return updatedItem;
+        }
+        return item;
+      });
+
+      const newDb = { ...db, stockMaster: updatedMaster };
+      updateDb(newDb);
+
+      if (updatedItem) {
+        await saveStockMasterToFirestore(updatedItem);
+        setStagedPhotoBase64(null);
+        setActivePhotoModalArticle(updatedItem);
+        setPhotoSuccessMsg("Photo deleted from App Files & Firebase Database.");
+        setTimeout(() => setPhotoSuccessMsg(null), 5000);
+      }
+    } catch (err: any) {
+      console.error("Failed to delete photo from App Files/Firebase:", err);
+      alert("Error deleting photo from server/database.");
+    } finally {
+      setIsSavingPhoto(false);
     }
   };
 
@@ -473,7 +580,7 @@ export default function DelhiStationInventoryApp() {
     let updatedItem: StockMaster | undefined;
     const updatedMaster = db.stockMaster.map(item => {
       if (item.article_number === articleNumber) {
-        updatedItem = { ...item, image_base64: base64Str || undefined, image_url: base64Str ? undefined : item.image_url };
+        updatedItem = { ...item, image_base64: base64Str || '', image_url: base64Str || '' };
         return updatedItem;
       }
       return item;
@@ -482,11 +589,6 @@ export default function DelhiStationInventoryApp() {
     updateDb(newDb);
     if (updatedItem) {
       saveStockMasterToFirestore(updatedItem);
-      if (base64Str) {
-        alert("Photo Saved to Cloud Database!");
-      } else {
-        alert("Photo deleted from Cloud Database!");
-      }
     }
     if (activePhotoModalArticle && activePhotoModalArticle.article_number === articleNumber) {
       const updated = updatedMaster.find(m => m.article_number === articleNumber) || null;
@@ -898,17 +1000,38 @@ export default function DelhiStationInventoryApp() {
     setConfirmDeleteModal(prev => ({ ...prev, isOpen: false }));
   };
 
-  const handleSaveArticle = (e: React.FormEvent) => {
+  const handleSaveArticle = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!articleForm.article_number || !articleForm.description) {
       alert("Please fill in Article Number and Description.");
       return;
     }
 
+    let savedImageUrl = articleForm.image_url;
+    if (articleForm.image_base64 && articleForm.image_base64.startsWith('data:image')) {
+      try {
+        const uploadRes = await fetch('/api/upload-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            article_number: articleForm.article_number,
+            image_base64: articleForm.image_base64
+          })
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadData.success && uploadData.image_url) {
+          savedImageUrl = uploadData.image_url;
+        }
+      } catch (err) {
+        console.error("Error saving image to app files server:", err);
+      }
+    }
+
     let nextMaster = [...db.stockMaster];
     const finalArticle: StockMaster = {
       ...articleForm,
-      image_url: articleForm.image_base64 || articleForm.image_url,
+      image_url: savedImageUrl,
+      image_base64: savedImageUrl?.startsWith('data:') ? savedImageUrl : undefined,
       units_per_box: Number(articleForm.units_per_box),
       boxes_per_pack: Number(articleForm.boxes_per_pack),
       estimated_monthly_usage: Number(articleForm.estimated_monthly_usage),
@@ -935,7 +1058,7 @@ export default function DelhiStationInventoryApp() {
       ...db,
       stockMaster: nextMaster
     });
-    saveStockMasterToFirestore(finalArticle);
+    await saveStockMasterToFirestore(finalArticle);
     setIsArticleModalOpen(false);
     setEditingArticle(null);
     playBeep();
@@ -3361,6 +3484,7 @@ export default function DelhiStationInventoryApp() {
                                       }}
                                     />
                                   </th>
+                                  <th className="p-4 text-center w-20">Item Photo</th>
                                   <th className="p-4">Article & Details</th>
                                   <th className="p-4">Barcode</th>
                                   <th className="p-4">Packaging Hierarchy</th>
@@ -3387,6 +3511,37 @@ export default function DelhiStationInventoryApp() {
                                           }
                                         }}
                                       />
+                                    </td>
+                                    <td className="p-4 text-center">
+                                      {(article.image_url || article.image_base64) ? (
+                                        <div 
+                                          className="relative group/tblimg w-12 h-12 rounded-lg overflow-hidden border border-slate-200 shadow-2xs mx-auto cursor-pointer"
+                                          onClick={() => setActivePhotoModalArticle(article)}
+                                          title="Click to view or edit photo"
+                                        >
+                                          <img 
+                                            src={article.image_url || article.image_base64} 
+                                            alt={article.description} 
+                                            className="w-full h-full object-cover group-hover/tblimg:scale-110 transition duration-200"
+                                            onError={(e) => {
+                                              (e.target as any).src = "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=150&auto=format&fit=crop&q=60";
+                                            }}
+                                          />
+                                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/tblimg:opacity-100 flex items-center justify-center transition text-white">
+                                            <Camera className="w-4 h-4" />
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => setActivePhotoModalArticle(article)}
+                                          className="w-12 h-12 rounded-lg bg-slate-100 hover:bg-slate-200 border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-amber-600 transition cursor-pointer mx-auto"
+                                          title="Upload image for this item"
+                                        >
+                                          <Camera className="w-4 h-4" />
+                                          <span className="text-[8px] font-bold mt-0.5">+ Image</span>
+                                        </button>
+                                      )}
                                     </td>
                                     <td className="p-4 max-w-sm">
                                       <div className="flex items-start gap-3">
@@ -3548,6 +3703,7 @@ export default function DelhiStationInventoryApp() {
                             }}
                           />
                         </th>
+                        <th className="p-4 text-center w-20">Item Photo</th>
                         <th className="p-4">Article & Details</th>
                         <th className="p-4">Barcode</th>
                         <th className="p-4">Packaging Hierarchy</th>
@@ -3562,7 +3718,7 @@ export default function DelhiStationInventoryApp() {
                     <tbody className="divide-y divide-slate-100 text-xs">
                       {filteredArticles.length === 0 ? (
                         <tr>
-                          <td colSpan={10} className="p-8 text-center text-slate-400">
+                          <td colSpan={11} className="p-8 text-center text-slate-400">
                             No matching stock articles found.
                           </td>
                         </tr>
@@ -3582,6 +3738,37 @@ export default function DelhiStationInventoryApp() {
                                   }
                                 }}
                               />
+                            </td>
+                            <td className="p-4 text-center">
+                              {(article.image_url || article.image_base64) ? (
+                                <div 
+                                  className="relative group/tblimg w-12 h-12 rounded-lg overflow-hidden border border-slate-200 shadow-2xs mx-auto cursor-pointer"
+                                  onClick={() => setActivePhotoModalArticle(article)}
+                                  title="Click to view or edit photo"
+                                >
+                                  <img 
+                                    src={article.image_url || article.image_base64} 
+                                    alt={article.description} 
+                                    className="w-full h-full object-cover group-hover/tblimg:scale-110 transition duration-200"
+                                    onError={(e) => {
+                                      (e.target as any).src = "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=150&auto=format&fit=crop&q=60";
+                                    }}
+                                  />
+                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/tblimg:opacity-100 flex items-center justify-center transition text-white">
+                                    <Camera className="w-4 h-4" />
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setActivePhotoModalArticle(article)}
+                                  className="w-12 h-12 rounded-lg bg-slate-100 hover:bg-slate-200 border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-amber-600 transition cursor-pointer mx-auto"
+                                  title="Upload image for this item"
+                                >
+                                  <Camera className="w-4 h-4" />
+                                  <span className="text-[8px] font-bold mt-0.5">+ Image</span>
+                                </button>
+                              )}
                             </td>
                             <td className="p-4 max-w-sm">
                               <div className="flex items-start gap-3">
@@ -4931,21 +5118,46 @@ export default function DelhiStationInventoryApp() {
               </div>
 
               <div>
-                <label className="block text-slate-500 font-semibold mb-1">Item Image</label>
-                <div className="flex items-center gap-4">
-                  {(articleForm.image_base64 || articleForm.image_url) && (
-                    <img 
-                      src={articleForm.image_base64 || articleForm.image_url} 
-                      alt="Preview" 
-                      className="w-16 h-16 object-cover rounded-lg border border-slate-200"
-                    />
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="text-xs"
-                  />
+                <label className="block text-slate-500 font-semibold mb-1">Item Image (App Files & Cloud DB)</label>
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <div className="flex items-center gap-4">
+                    {(articleForm.image_base64 || articleForm.image_url) ? (
+                      <div className="relative group w-16 h-16 shrink-0">
+                        <img 
+                          src={articleForm.image_base64 || articleForm.image_url} 
+                          alt="Preview" 
+                          className="w-16 h-16 object-cover rounded-xl border border-slate-300 shadow-xs"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-16 h-16 rounded-xl bg-slate-100 border border-slate-200 flex flex-col items-center justify-center text-slate-400 shrink-0">
+                        <Package className="w-6 h-6 mb-0.5 text-slate-300" />
+                        <span className="text-[9px] font-bold">No Image</span>
+                      </div>
+                    )}
+                    <div className="space-y-1 flex-1">
+                      <label className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer inline-flex items-center gap-1.5 shadow-2xs transition">
+                        <Upload className="w-3.5 h-3.5" />
+                        {(articleForm.image_base64 || articleForm.image_url) ? "Change Photo" : "Upload Photo"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleImageUpload}
+                          className="hidden"
+                        />
+                      </label>
+                      {(articleForm.image_base64 || articleForm.image_url) && (
+                        <button
+                          type="button"
+                          onClick={() => setArticleForm({ ...articleForm, image_base64: '', image_url: '' })}
+                          className="text-[11px] text-red-600 hover:text-red-700 font-semibold ml-2 inline-block transition"
+                        >
+                          Remove Photo
+                        </button>
+                      )}
+                      <p className="text-[10px] text-slate-400">Photo will be saved to server files & Firestore DB to be visible to all users.</p>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -6293,6 +6505,8 @@ export default function DelhiStationInventoryApp() {
                 type="button"
                 onClick={() => {
                   stopPhotoCamera();
+                  setStagedPhotoBase64(null);
+                  setPhotoSuccessMsg(null);
                   setActivePhotoModalArticle(null);
                 }}
                 className="text-slate-400 hover:text-slate-600 text-xl font-bold p-1 cursor-pointer"
@@ -6302,6 +6516,13 @@ export default function DelhiStationInventoryApp() {
             </div>
 
             <div className="space-y-4">
+              {photoSuccessMsg && (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-3.5 py-2.5 rounded-xl font-medium flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{photoSuccessMsg}</span>
+                </div>
+              )}
+
               {isCameraActive ? (
                 <div className="relative rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center border border-slate-200 shadow-inner">
                   <video ref={photoVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
@@ -6323,19 +6544,19 @@ export default function DelhiStationInventoryApp() {
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center p-6 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
-                  {activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url ? (
+                <div className="flex flex-col items-center justify-center p-6 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                  {(stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url) ? (
                     <div className="relative group">
                       <img
-                        src={activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url}
+                        src={stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url}
                         alt={activePhotoModalArticle.description}
-                        className="w-40 h-40 object-cover rounded-xl border border-slate-300 shadow-md cursor-pointer"
-                        onClick={() => setLightboxImageUrl(activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url || null)}
+                        className="w-44 h-44 object-cover rounded-xl border border-slate-300 shadow-md cursor-pointer"
+                        onClick={() => setLightboxImageUrl(stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url || null)}
                         title="Click to expand view"
                       />
                       <button
                         type="button"
-                        onClick={() => setLightboxImageUrl(activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url || null)}
+                        onClick={() => setLightboxImageUrl(stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url || null)}
                         className="absolute bottom-2 right-2 bg-black/60 hover:bg-black text-white p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition shadow"
                         title="Expand View"
                       >
@@ -6348,39 +6569,71 @@ export default function DelhiStationInventoryApp() {
                     </div>
                   )}
 
-                  <div className="text-center">
-                    <p className="text-xs font-bold text-slate-700">
-                      {activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url ? "Photo Saved in Cloud Database" : "No Photo Attached"}
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Synced & saved in Firestore database</p>
+                  <div className="text-center space-y-1">
+                    {stagedPhotoBase64 ? (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-800 bg-amber-100 px-3 py-1 rounded-full border border-amber-300 animate-pulse">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-600" /> Photo Uploaded (Ready to Save)
+                      </span>
+                    ) : (activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url) ? (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Photo Synced in Firebase DB
+                      </span>
+                    ) : (
+                      <span className="text-xs font-semibold text-slate-500">No Photo Attached</span>
+                    )}
+                    <p className="text-[10px] text-slate-400">Compressed & synchronized with Firestore database</p>
                   </div>
                 </div>
               )}
 
               {!isCameraActive && (
-                <div className="grid grid-cols-2 gap-2 pt-2">
-                  <label className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs p-2.5 rounded-lg transition shadow-sm hover:shadow flex items-center justify-center gap-1.5 cursor-pointer">
-                    <Upload className="w-4 h-4" />
-                    {activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url ? "Replace Photo" : "Upload File"}
-                    <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-                  </label>
+                <div className="space-y-3 pt-1">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs p-2.5 rounded-lg transition shadow-sm hover:shadow flex items-center justify-center gap-1.5 cursor-pointer">
+                      <Upload className="w-4 h-4" />
+                      {(stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url) ? "Choose File" : "Upload File"}
+                      <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+                    </label>
 
-                  <button
-                    type="button"
-                    onClick={startPhotoCamera}
-                    className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs p-2.5 rounded-lg transition shadow-sm hover:shadow flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Camera className="w-4 h-4" />
-                    Use Camera
-                  </button>
+                    <button
+                      type="button"
+                      onClick={startPhotoCamera}
+                      className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs p-2.5 rounded-lg transition shadow-sm hover:shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Camera className="w-4 h-4" />
+                      Use Camera
+                    </button>
+                  </div>
+
+                  {/* SAVE TO SERVER (FIREBASE DATABASE) BUTTON */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      disabled={!stagedPhotoBase64 || isSavingPhoto}
+                      onClick={handleSavePhotoToFirebase}
+                      className={`w-full py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition shadow-md ${
+                        stagedPhotoBase64 && !isSavingPhoto
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer ring-2 ring-emerald-400/50 shadow-lg animate-pulse'
+                          : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                      }`}
+                    >
+                      <CloudUpload className="w-4 h-4" />
+                      {isSavingPhoto ? "Saving to Firebase Database..." : "Save to Firebase Database"}
+                    </button>
+                    <p className="text-[10px] text-center text-slate-400 mt-1">
+                      {stagedPhotoBase64 
+                        ? "Photo is staged! Click above to save permanently to Cloud Database." 
+                        : "Upload a file or take a photo above to enable saving to Firebase Database."}
+                    </p>
+                  </div>
                 </div>
               )}
 
-              {(activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url) && !isCameraActive && (
+              {(activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url || stagedPhotoBase64) && !isCameraActive && (
                 <button
                   type="button"
-                  onClick={() => updateArticlePhoto(activePhotoModalArticle.article_number, null)}
-                  className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs p-2.5 rounded-lg border border-red-200 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  onClick={handleDeletePhotoFromFirebase}
+                  className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs p-2.5 rounded-lg border border-red-200 transition flex items-center justify-center gap-1.5 cursor-pointer mt-1"
                 >
                   <Trash2 className="w-4 h-4" />
                   Delete Photo from Database
