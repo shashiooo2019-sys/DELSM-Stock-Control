@@ -406,7 +406,12 @@ export function saveDatabase(data: {
   purchaseOrders: PurchaseOrder[];
 }) {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('delhi_stock_master', JSON.stringify(data.stockMaster));
+  // Strip image_base64 to save browser storage
+  const strippedStockMaster = data.stockMaster.map(item => {
+      const { image_base64, ...rest } = item;
+      return rest;
+  });
+  localStorage.setItem('delhi_stock_master', JSON.stringify(strippedStockMaster));
   localStorage.setItem('delhi_stock_taking_log', JSON.stringify(data.stockTakingLog));
   localStorage.setItem('delhi_purchase_orders', JSON.stringify(data.purchaseOrders));
 }

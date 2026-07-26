@@ -482,6 +482,7 @@ export default function DelhiStationInventoryApp() {
     updateDb(newDb);
     if (updatedItem) {
       saveStockMasterToFirestore(updatedItem);
+      alert("Photo Stored Locally");
     }
     if (activePhotoModalArticle && activePhotoModalArticle.article_number === articleNumber) {
       const updated = updatedMaster.find(m => m.article_number === articleNumber) || null;
