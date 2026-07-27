@@ -923,6 +923,7 @@ export default function DelhiStationInventoryApp() {
       ...db,
       purchaseOrders: [...db.purchaseOrders, newPO]
     });
+    savePurchaseOrderToFirestore(newPO).catch(err => console.error("Firestore PO save error:", err));
 
     playBeep();
     setSelectedPOWorkflow(newPO);
@@ -962,6 +963,7 @@ export default function DelhiStationInventoryApp() {
       ...db,
       purchaseOrders: [...db.purchaseOrders, ...newPOs]
     });
+    newPOs.forEach(po => savePurchaseOrderToFirestore(po).catch(err => console.error("Firestore PO save error:", err)));
 
     playBeep();
     alert(`Successfully generated ${newPOs.length} Purchase Orders in 'Raised' status! Please go to 'Orders' tab to approve or reject them.`);
@@ -1002,6 +1004,7 @@ export default function DelhiStationInventoryApp() {
       ...db,
       purchaseOrders: [...db.purchaseOrders, newPO]
     });
+    savePurchaseOrderToFirestore(newPO).catch(err => console.error("Firestore PO save error:", err));
 
     playBeep();
     setIsManualPOModalOpen(false);

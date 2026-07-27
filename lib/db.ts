@@ -4,7 +4,8 @@ import {
   setDoc, 
   deleteDoc, 
   onSnapshot, 
-  writeBatch 
+  writeBatch,
+  getDocFromServer
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { db as firestoreDb, auth } from './firebase';
@@ -15,6 +16,64 @@ import {
 } from '@/src/data/initialInventory';
 
 export { INITIAL_STOCK_MASTER, INITIAL_STOCK_TAKING_LOG, INITIAL_PURCHASE_ORDERS };
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
+  } catch (error) {
+    if(error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
+    }
+  }
+}
+testConnection();
 
 // Internal ID helper
 function generateId(prefix: string): string {
@@ -327,8 +386,7 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
     const docRef = doc(firestoreDb, 'stockMaster', item.article_number);
     await setDoc(docRef, cleanItem, { merge: true });
   } catch (err) {
-    console.error('Error saving StockMaster to Firestore:', err);
-    throw err;
+    handleFirestoreError(err, OperationType.WRITE, 'stockMaster/' + item.article_number);
   }
 }
 
@@ -344,7 +402,7 @@ export async function deleteStockMasterFromFirestore(articleNumber: string) {
     const docRef = doc(firestoreDb, 'stockMaster', articleNumber);
     await deleteDoc(docRef);
   } catch (err) {
-    console.error('Error deleting StockMaster from Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, 'stockMaster/' + articleNumber);
   }
 }
 
@@ -354,7 +412,7 @@ export async function saveStockLogToFirestore(log: StockTakingLog) {
     const docRef = doc(firestoreDb, 'stockTakingLogs', log.log_id);
     await setDoc(docRef, cleanLog, { merge: true });
   } catch (err) {
-    console.error('Error saving StockTakingLog to Firestore:', err);
+    handleFirestoreError(err, OperationType.WRITE, 'stockTakingLogs/' + log.log_id);
   }
 }
 
@@ -363,7 +421,7 @@ export async function deleteStockLogFromFirestore(logId: string) {
     const docRef = doc(firestoreDb, 'stockTakingLogs', logId);
     await deleteDoc(docRef);
   } catch (err) {
-    console.error('Error deleting StockTakingLog from Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, 'stockTakingLogs/' + logId);
   }
 }
 
@@ -373,7 +431,7 @@ export async function savePurchaseOrderToFirestore(po: PurchaseOrder) {
     const docRef = doc(firestoreDb, 'purchaseOrders', po.po_number);
     await setDoc(docRef, cleanPo, { merge: true });
   } catch (err) {
-    console.error('Error saving PurchaseOrder to Firestore:', err);
+    handleFirestoreError(err, OperationType.WRITE, 'purchaseOrders/' + po.po_number);
   }
 }
 
@@ -382,7 +440,7 @@ export async function deletePurchaseOrderFromFirestore(poNumber: string) {
     const docRef = doc(firestoreDb, 'purchaseOrders', poNumber);
     await deleteDoc(docRef);
   } catch (err) {
-    console.error('Error deleting PurchaseOrder from Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, 'purchaseOrders/' + poNumber);
   }
 }
 
@@ -482,7 +540,7 @@ export function subscribeToDatabase(
       currentStockMaster = Array.from(itemMap.values()).filter(item => !deletedArticles.has(item.article_number));
     }
     notify();
-  }, (err) => console.error('Firestore stockMaster snapshot error:', err));
+  }, (err) => handleFirestoreError(err, OperationType.GET, 'stockMaster'));
 
   const unsubLogs = onSnapshot(collection(firestoreDb, 'stockTakingLogs'), (snapshot) => {
     const firestoreLogs = snapshot.docs.map(d => d.data() as StockTakingLog);
@@ -497,7 +555,7 @@ export function subscribeToDatabase(
     if (stockMasterLoaded) {
       notify();
     }
-  }, (err) => console.error('Firestore stockTakingLogs snapshot error:', err));
+  }, (err) => handleFirestoreError(err, OperationType.GET, 'stockTakingLogs'));
 
   const unsubPOs = onSnapshot(collection(firestoreDb, 'purchaseOrders'), (snapshot) => {
     const firestorePOs = snapshot.docs.map(d => d.data() as PurchaseOrder);
@@ -512,7 +570,7 @@ export function subscribeToDatabase(
     if (stockMasterLoaded) {
       notify();
     }
-  }, (err) => console.error('Firestore purchaseOrders snapshot error:', err));
+  }, (err) => handleFirestoreError(err, OperationType.GET, 'purchaseOrders'));
 
   return () => {
     unsubMeta();
