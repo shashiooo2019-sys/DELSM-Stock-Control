@@ -1,28 +1,15 @@
 'use client';
 
 import React from 'react';
-import dynamic from 'next/dynamic';
-import {
-  Calendar,
-  Menu,
-  Volume2,
-  VolumeX,
-  User,
-  Lock,
-  Shield,
-  LogIn,
-  LogOut,
-  AlertTriangle,
-} from 'lucide-react';
+import { Calendar, Menu, Volume2, VolumeX, User, Lock, Shield, LogIn, LogOut, TriangleAlert as AlertTriangle } from 'lucide-react';
 import PublicSearch from '@/components/PublicSearch';
 import { useInventoryStore } from '@/lib/inventory-store';
-
-const DashboardTab = dynamic(() => import('@/components/tabs/DashboardTab'), { ssr: false });
-const MasterTab = dynamic(() => import('@/components/tabs/MasterTab'), { ssr: false });
-const ScannerTab = dynamic(() => import('@/components/tabs/ScannerTab'), { ssr: false });
-const OrdersTab = dynamic(() => import('@/components/tabs/OrdersTab'), { ssr: false });
-const AnalyticsTab = dynamic(() => import('@/components/tabs/AnalyticsTab'), { ssr: false });
-const SharedModals = dynamic(() => import('@/components/tabs/SharedModals'), { ssr: false });
+import DashboardTab from '@/components/tabs/DashboardTab';
+import MasterTab from '@/components/tabs/MasterTab';
+import ScannerTab from '@/components/tabs/ScannerTab';
+import OrdersTab from '@/components/tabs/OrdersTab';
+import AnalyticsTab from '@/components/tabs/AnalyticsTab';
+import SharedModals from '@/components/tabs/SharedModals';
 
 export default function DelhiStationInventoryApp() {
   const store = useInventoryStore();
