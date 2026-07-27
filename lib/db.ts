@@ -421,6 +421,23 @@ export function saveDatabase(data: {
   localStorage.setItem('delhi_purchase_orders', JSON.stringify(data.purchaseOrders));
 }
 
+// Helper to clean objects for Firestore (Firestore rejects 'undefined' field values)
+export function sanitizeForFirestore<T extends object>(obj: T): Record<string, any> {
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+        clean[key] = sanitizeForFirestore(value);
+      } else {
+        clean[key] = value;
+      }
+    } else {
+      clean[key] = ''; // convert undefined strings/optional fields to empty string for safety
+    }
+  }
+  return clean;
+}
+
 // Firestore Realtime Synchronization and Persistent Operations
 
 export async function saveStockMasterToFirestore(item: StockMaster) {
@@ -432,8 +449,15 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
         console.warn('Anonymous auth before Firestore save failed:', authErr);
       }
     }
+    const cleanItem = sanitizeForFirestore({
+      ...item,
+      image_base64: item.image_base64 ?? '',
+      image_url: item.image_url ?? '',
+      quantity_details: item.quantity_details ?? '',
+      add_info: item.add_info ?? ''
+    });
     const docRef = doc(firestoreDb, 'stockMaster', item.article_number);
-    await setDoc(docRef, item, { merge: true });
+    await setDoc(docRef, cleanItem, { merge: true });
   } catch (err) {
     console.error('Error saving StockMaster to Firestore:', err);
     throw err;
@@ -451,8 +475,9 @@ export async function deleteStockMasterFromFirestore(articleNumber: string) {
 
 export async function saveStockLogToFirestore(log: StockTakingLog) {
   try {
+    const cleanLog = sanitizeForFirestore(log);
     const docRef = doc(firestoreDb, 'stockTakingLogs', log.log_id);
-    await setDoc(docRef, log, { merge: true });
+    await setDoc(docRef, cleanLog, { merge: true });
   } catch (err) {
     console.error('Error saving StockTakingLog to Firestore:', err);
   }
@@ -469,8 +494,9 @@ export async function deleteStockLogFromFirestore(logId: string) {
 
 export async function savePurchaseOrderToFirestore(po: PurchaseOrder) {
   try {
+    const cleanPo = sanitizeForFirestore(po);
     const docRef = doc(firestoreDb, 'purchaseOrders', po.po_number);
-    await setDoc(docRef, po, { merge: true });
+    await setDoc(docRef, cleanPo, { merge: true });
   } catch (err) {
     console.error('Error saving PurchaseOrder to Firestore:', err);
   }
@@ -494,15 +520,22 @@ export async function seedInitialFirestoreData() {
     batch.set(doc(firestoreDb, 'appMeta', 'init'), { initialized: true });
     INITIAL_STOCK_MASTER.forEach(item => {
       const ref = doc(firestoreDb, 'stockMaster', item.article_number);
-      batch.set(ref, item);
+      const cleanItem = sanitizeForFirestore({
+        ...item,
+        image_base64: item.image_base64 ?? '',
+        image_url: item.image_url ?? '',
+        quantity_details: item.quantity_details ?? '',
+        add_info: item.add_info ?? ''
+      });
+      batch.set(ref, cleanItem);
     });
     INITIAL_STOCK_TAKING_LOG.forEach(log => {
       const ref = doc(firestoreDb, 'stockTakingLogs', log.log_id);
-      batch.set(ref, log);
+      batch.set(ref, sanitizeForFirestore(log));
     });
     INITIAL_PURCHASE_ORDERS.forEach(po => {
       const ref = doc(firestoreDb, 'purchaseOrders', po.po_number);
-      batch.set(ref, po);
+      batch.set(ref, sanitizeForFirestore(po));
     });
     await batch.commit();
     console.log('Successfully seeded initial data to Firestore');
