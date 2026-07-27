@@ -24,9 +24,9 @@ export function fuzzySearch(query: string, items: StockMaster[]): Array<{ item: 
   
   return items
     .map(item => {
-      const description = item.description.toLowerCase();
-      const articleNumber = item.article_number.toLowerCase();
-      const barcode = item.barcode.toLowerCase();
+      const description = (item.description || '').toLowerCase();
+      const articleNumber = (item.article_number || '').toLowerCase();
+      const barcode = (item.barcode || '').toLowerCase();
       
       const distance = Math.min(
         levenshteinDistance(normalizedQuery, description.slice(0, normalizedQuery.length)),

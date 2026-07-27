@@ -15,7 +15,7 @@ interface EditArticleModalProps {
   currentUser: { username: string; role: 'user' | 'admin' } | null;
   getItemPhotoPath: (article_number?: string, image_url?: string) => string;
   handleImgError: (e: React.SyntheticEvent<HTMLImageElement, Event>) => void;
-  onPhotoUploaded?: (articleNumber: string, newUrl: string) => void;
+  onPhotoUploaded?: (articleNumber: string, newUrl: string, base64?: string) => void;
 }
 
 export default function EditArticleModal({
@@ -110,7 +110,7 @@ export default function EditArticleModal({
       }));
 
       if (onPhotoUploaded) {
-        onPhotoUploaded(artNum, freshUrl);
+        onPhotoUploaded(artNum, freshUrl, base64Data);
       }
 
       setPhotoSuccessMsg(`Photo saved to repository (/public/inventory/${artNum}.jpg)`);

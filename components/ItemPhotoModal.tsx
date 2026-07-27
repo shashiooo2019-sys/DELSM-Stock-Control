@@ -10,7 +10,7 @@ interface ItemPhotoModalProps {
   getItemPhotoPath: (article_number?: string, image_url?: string) => string;
   handleImgError: (e: React.SyntheticEvent<HTMLImageElement, Event>) => void;
   setLightboxImageUrl: (url: string | null) => void;
-  onPhotoUploaded?: (articleNumber: string, newUrl: string) => void;
+  onPhotoUploaded?: (articleNumber: string, newUrl: string, base64?: string) => void;
 }
 
 export default function ItemPhotoModal({
@@ -31,6 +31,46 @@ export default function ItemPhotoModal({
 
   const currentPhoto = customPhotoUrl || getItemPhotoPath(article.article_number, article.image_url);
 
+  const compressImageFile = async (fileOrBlob: File | Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxDim = 800;
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            }
+          } else {
+            if (height > maxDim) {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Could not get canvas context'));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/webp', 0.8);
+          resolve(dataUrl);
+        };
+        img.onerror = reject;
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(fileOrBlob);
+    });
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -40,13 +80,15 @@ export default function ItemPhotoModal({
     setSuccessMsg(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('article_number', article.article_number);
+      const compressedBase64 = await compressImageFile(file);
 
       const res = await fetch('/api/upload-image', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          article_number: article.article_number,
+          image_base64: compressedBase64,
+        }),
       });
 
       const data = await res.json();
@@ -57,7 +99,7 @@ export default function ItemPhotoModal({
       const freshUrl = data.image_url || `/inventory/${article.article_number}.jpg?t=${Date.now()}`;
       setCustomPhotoUrl(freshUrl);
       if (onPhotoUploaded) {
-        onPhotoUploaded(article.article_number, freshUrl);
+        onPhotoUploaded(article.article_number, freshUrl, compressedBase64);
       }
       setSuccessMsg(`Photo updated in repository (/public/inventory/${article.article_number}.jpg)`);
     } catch (err: any) {

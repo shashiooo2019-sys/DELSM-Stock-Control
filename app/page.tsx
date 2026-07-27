@@ -147,8 +147,8 @@ function fuzzySearch(query: string, items: StockMaster[]): Array<{ item: StockMa
   const cleanQuery = query.toLowerCase().trim();
   
   const results = items.map(item => {
-    const desc = item.description.toLowerCase();
-    const artNum = item.article_number.toLowerCase();
+    const desc = (item.description || '').toLowerCase();
+    const artNum = (item.article_number || '').toLowerCase();
     const barcode = (item.barcode || '').toLowerCase();
     
     let score = 0;
@@ -426,7 +426,13 @@ export default function DelhiStationInventoryApp() {
   };
 
   const getItemPhotoPath = (article_number?: string, image_url?: string) => {
-    if (image_url && image_url.trim() && !image_url.startsWith('data:')) {
+    if (article_number) {
+      const item = db.stockMaster.find(sm => sm.article_number === article_number);
+      if (item && item.image_base64 && item.image_base64.startsWith('data:image')) {
+        return item.image_base64;
+      }
+    }
+    if (image_url && image_url.trim()) {
       return image_url;
     }
     if (article_number) {
@@ -879,7 +885,7 @@ export default function DelhiStationInventoryApp() {
     const finalArticle: StockMaster = {
       ...articleForm,
       image_url: savedImageUrl || articleForm.image_url || '',
-      image_base64: savedImageUrl ? '' : (articleForm.image_base64 || ''),
+      image_base64: articleForm.image_base64 || '',
       units_per_box: Number(articleForm.units_per_box) || 1,
       boxes_per_pack: Number(articleForm.boxes_per_pack) || 1,
       estimated_monthly_usage: Number(articleForm.estimated_monthly_usage) || 0,
@@ -1477,10 +1483,10 @@ export default function DelhiStationInventoryApp() {
   // Filtered Articles list
   const filteredArticles = useMemo(() => {
     return evaluatedArticles.filter(article => {
-      const matchesSearch = article.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            article.article_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            article.barcode.includes(searchQuery) ||
-                            (article.location && article.location.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesSearch = (article.description || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            (article.article_number || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            (article.barcode || '').includes(searchQuery) ||
+                            (article.location && (article.location || '').toLowerCase().includes(searchQuery.toLowerCase()));
       
       const matchesChannel = channelFilter === 'All' ||
         (channelFilter === 'Central' && article.ordering_channel === 'Central Ordering Team') ||
@@ -2360,8 +2366,8 @@ export default function DelhiStationInventoryApp() {
                         isOverdue = true;
                       }
 
-                      const safeCurrentStock = isNaN(article.currentStock) ? 0 : article.currentStock;
-                      const safeDailyBurn = isNaN(article.dailyBurn) ? 0 : article.dailyBurn;
+                      const safeCurrentStock = isNaN(Number(article.currentStock)) ? 0 : Number(article.currentStock);
+                      const safeDailyBurn = isNaN(Number(article.dailyBurn)) ? 0 : Number(article.dailyBurn);
                       const daysUntilDel = Math.max(0, diffDays);
                       const calcProjected = Math.round(safeCurrentStock - (daysUntilDel * safeDailyBurn));
                       const finalProjected = (article.suppression.projectedStockOnArrival !== null && !isNaN(article.suppression.projectedStockOnArrival))
@@ -3211,7 +3217,7 @@ export default function DelhiStationInventoryApp() {
                                   <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">In Stock Quantity</span>
                                   <div className="text-right">
                                     <span className={`font-mono text-2xl font-black ${stockTextCol}`}>
-                                      {article.currentStock.toLocaleString()}
+                                      {(article.currentStock ?? 0).toLocaleString()}
                                     </span>
                                     <span className="text-xs font-semibold text-slate-500 ml-1">
                                       {article.smallest_unit_name || 'units'}
@@ -3330,7 +3336,7 @@ export default function DelhiStationInventoryApp() {
                                 </span>
                               </h3>
                               <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
-                                Total Stock Quantity: <span className="text-amber-400 font-bold">{group.totalUnits.toLocaleString()}</span> units
+                                Total Stock Quantity: <span className="text-amber-400 font-bold">{(group.totalUnits ?? 0).toLocaleString()}</span> units
                               </p>
                             </div>
                           </div>
@@ -3889,9 +3895,9 @@ export default function DelhiStationInventoryApp() {
                     className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-5"
                   >
                     <div className="flex items-start gap-4 border-b border-slate-100 pb-4">
-                      {scannedArticle.image_url ? (
+                      {scannedArticle ? (
                         <img 
-                          src={scannedArticle.image_url} 
+                          src={getItemPhotoPath(scannedArticle.article_number, scannedArticle.image_url)} 
                           alt={scannedArticle.description} 
                           className="w-16 h-16 rounded-xl object-cover border border-slate-200 shadow-xs flex-shrink-0"
                           onError={(e) => {
@@ -4843,9 +4849,11 @@ export default function DelhiStationInventoryApp() {
         currentUser={currentUser}
         getItemPhotoPath={getItemPhotoPath}
         handleImgError={handleImgError}
-        onPhotoUploaded={(artNum, freshUrl) => {
+        onPhotoUploaded={(artNum, freshUrl, base64) => {
           const updatedMaster = db.stockMaster.map((item) =>
-            item.article_number === artNum ? { ...item, image_url: freshUrl } : item
+            item.article_number === artNum 
+              ? { ...item, image_url: freshUrl, image_base64: base64 || item.image_base64 || '' } 
+              : item
           );
           const nextDb = {
             ...db,
@@ -5249,9 +5257,9 @@ export default function DelhiStationInventoryApp() {
                 <span className="font-semibold text-slate-900 bg-slate-100 px-2 py-1 rounded">
                   {searchQuery ? `Search matches ("${searchQuery}")` : "All Master Items"} ({db.stockMaster.filter(item => {
                     const matchesSearch = searchQuery === '' || 
-                      item.article_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                      item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                      item.barcode.includes(searchQuery);
+                      (item.article_number || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (item.description || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (item.barcode || '').includes(searchQuery);
                     return matchesSearch;
                   }).length} items)
                 </span>
@@ -5270,9 +5278,9 @@ export default function DelhiStationInventoryApp() {
                 {db.stockMaster
                   .filter(item => {
                     const matchesSearch = searchQuery === '' || 
-                      item.article_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                      item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                      item.barcode.includes(searchQuery);
+                      (item.article_number || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (item.description || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (item.barcode || '').includes(searchQuery);
                     return matchesSearch;
                   })
                   .map((item, index) => {
@@ -5438,7 +5446,7 @@ export default function DelhiStationInventoryApp() {
                 <label className="block text-slate-500 font-semibold mb-1">Quantity Received</label>
                 <input
                   type="number"
-                  value={receiveQty}
+                  value={isNaN(receiveQty) ? '' : receiveQty}
                   onChange={(e) => {
                     setReceiveQty(Number(e.target.value));
                     if(Number(e.target.value) > 0) setQuantityError('');
@@ -5496,7 +5504,7 @@ export default function DelhiStationInventoryApp() {
               <label className="block text-slate-500 font-semibold mb-1">Order Quantity</label>
               <input
                 type="number"
-                value={quickOrderQty}
+                value={isNaN(quickOrderQty) ? '' : quickOrderQty}
                 onChange={(e) => {
                   setQuickOrderQty(Number(e.target.value));
                   if (Number(e.target.value) > 0) setQuantityError('');
@@ -5601,8 +5609,8 @@ export default function DelhiStationInventoryApp() {
               return (
                 <div className="space-y-4">
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 flex items-center gap-4">
-                    {article?.image_url ? (
-                      <img src={article.image_url} alt={article.description} className="w-14 h-14 rounded-lg object-cover border border-slate-200 shrink-0" />
+                    {article ? (
+                      <img src={getItemPhotoPath(article.article_number, article.image_url)} onError={handleImgError} alt={article.description} className="w-14 h-14 rounded-lg object-cover border border-slate-200 shrink-0" />
                     ) : (
                       <div className="w-14 h-14 rounded-lg bg-slate-200 flex items-center justify-center border border-slate-300 shrink-0">
                         <Package className="w-7 h-7 text-slate-500" />
@@ -5722,7 +5730,7 @@ export default function DelhiStationInventoryApp() {
                           Fulfillment Completed Successfully
                         </h4>
                         <p className="text-slate-600 leading-normal">
-                          This purchase order has been fully received. The corresponding quantity of <strong className="text-slate-800">{selectedPOWorkflow.order_quantity_units.toLocaleString()} units</strong> has been added to the master shelf location for <strong className="text-slate-800">{article?.description}</strong>.
+                          This purchase order has been fully received. The corresponding quantity of <strong className="text-slate-800">{(selectedPOWorkflow.order_quantity_units ?? 0).toLocaleString()} units</strong> has been added to the master shelf location for <strong className="text-slate-800">{article?.description}</strong>.
                         </p>
                       </div>
                     )}
@@ -5882,9 +5890,11 @@ export default function DelhiStationInventoryApp() {
         getItemPhotoPath={getItemPhotoPath}
         handleImgError={handleImgError}
         setLightboxImageUrl={setLightboxImageUrl}
-        onPhotoUploaded={(artNum, freshUrl) => {
+        onPhotoUploaded={(artNum, freshUrl, base64) => {
           const updatedMaster = db.stockMaster.map((item) =>
-            item.article_number === artNum ? { ...item, image_url: freshUrl } : item
+            item.article_number === artNum 
+              ? { ...item, image_url: freshUrl, image_base64: base64 || item.image_base64 || '' } 
+              : item
           );
           const nextDb = {
             ...db,
