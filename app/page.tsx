@@ -707,9 +707,11 @@ export default function DelhiStationInventoryApp() {
       const nextLogs = db.stockTakingLog.filter(log => log.article_number !== articleNumber);
       const nextPOs = db.purchaseOrders.filter(po => po.article_number !== articleNumber);
 
-      deleteStockMasterFromFirestore(articleNumber);
-      db.stockTakingLog.filter(log => log.article_number === articleNumber).forEach(l => deleteStockLogFromFirestore(l.log_id));
-      db.purchaseOrders.filter(po => po.article_number === articleNumber).forEach(p => deletePurchaseOrderFromFirestore(p.po_number));
+      if (articleNumber) {
+        deleteStockMasterFromFirestore(articleNumber);
+        db.stockTakingLog.filter(log => log.article_number === articleNumber).forEach(l => deleteStockLogFromFirestore(l.log_id));
+        db.purchaseOrders.filter(po => po.article_number === articleNumber).forEach(p => deletePurchaseOrderFromFirestore(p.po_number));
+      }
 
       updateDb({
         stockMaster: nextMaster,
@@ -728,9 +730,11 @@ export default function DelhiStationInventoryApp() {
       const nextPOs = db.purchaseOrders.filter(po => !selectedArticleNumbers.includes(po.article_number));
 
       selectedArticleNumbers.forEach(artNum => {
-        deleteStockMasterFromFirestore(artNum);
-        db.stockTakingLog.filter(log => log.article_number === artNum).forEach(l => deleteStockLogFromFirestore(l.log_id));
-        db.purchaseOrders.filter(po => po.article_number === artNum).forEach(p => deletePurchaseOrderFromFirestore(p.po_number));
+        if (artNum) {
+          deleteStockMasterFromFirestore(artNum);
+          db.stockTakingLog.filter(log => log.article_number === artNum).forEach(l => deleteStockLogFromFirestore(l.log_id));
+          db.purchaseOrders.filter(po => po.article_number === artNum).forEach(p => deletePurchaseOrderFromFirestore(p.po_number));
+        }
       });
 
       updateDb({
