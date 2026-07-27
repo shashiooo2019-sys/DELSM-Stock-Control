@@ -15,7 +15,10 @@ export async function GET(
       return new NextResponse('Filename required', { status: 400 });
     }
 
-    const filePath = path.join(process.cwd(), 'public', 'uploads', sanitizedFilename);
+    let filePath = path.join(process.cwd(), 'public', 'uploads', sanitizedFilename);
+    if (!fs.existsSync(filePath)) {
+      filePath = path.join(process.cwd(), 'public', 'inventory', sanitizedFilename);
+    }
 
     if (!fs.existsSync(filePath)) {
       return new NextResponse('Image not found', { status: 404 });

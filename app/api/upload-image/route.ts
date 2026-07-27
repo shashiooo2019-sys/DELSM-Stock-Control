@@ -57,13 +57,26 @@ export async function POST(req: NextRequest) {
     const filePath = path.join(uploadsDir, fileName);
     fs.writeFileSync(filePath, imageBuffer);
 
-    // Provide both /api/images URL and /uploads URL
-    const imageUrl = `/api/images/${fileName}?t=${Date.now()}`;
+    // Ensure image is stored directly into repository /public/inventory
+    const inventoryDir = path.join(process.cwd(), 'public', 'inventory');
+    if (!fs.existsSync(inventoryDir)) {
+      fs.mkdirSync(inventoryDir, { recursive: true });
+    }
+    const inventoryFilePath = path.join(inventoryDir, `${sanitizedArticle}.${extension}`);
+    fs.writeFileSync(inventoryFilePath, imageBuffer);
+    
+    // Also store as .jpg in /public/inventory for fallback static paths
+    const inventoryJpgPath = path.join(inventoryDir, `${sanitizedArticle}.jpg`);
+    fs.writeFileSync(inventoryJpgPath, imageBuffer);
+
+    // Provide URL targeting inventory asset with timestamp query for instant refresh
+    const imageUrl = `/inventory/${sanitizedArticle}.jpg?t=${Date.now()}`;
 
     return NextResponse.json({ 
       success: true, 
       image_url: imageUrl,
-      fileName
+      fileName,
+      repositoryPath: `/public/inventory/${sanitizedArticle}.jpg`
     });
 
   } catch (err: any) {

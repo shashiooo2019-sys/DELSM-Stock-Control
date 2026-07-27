@@ -8,6 +8,13 @@ import {
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { db as firestoreDb, auth } from './firebase';
+import { 
+  INITIAL_STOCK_MASTER, 
+  INITIAL_STOCK_TAKING_LOG, 
+  INITIAL_PURCHASE_ORDERS 
+} from '@/src/data/initialInventory';
+
+export { INITIAL_STOCK_MASTER, INITIAL_STOCK_TAKING_LOG, INITIAL_PURCHASE_ORDERS };
 
 // Internal ID helper
 function generateId(prefix: string): string {
@@ -63,145 +70,6 @@ export interface PurchaseOrder {
   order_quantity_units: number;
   status: POStatus;
 }
-
-// Initial Mock Data
-const INITIAL_STOCK_MASTER: StockMaster[] = [
-  {
-    article_number: "DS-1001",
-    description: "Premium Fountain Pen (Royal Blue)",
-    barcode: "8901034001012",
-    smallest_unit_name: "Piece",
-    units_per_box: 10,
-    boxes_per_pack: 5,
-    estimated_monthly_usage: 1500,
-    min_quantity: 200,
-    reorder_level: 400,
-    max_quantity: 2000,
-    total_stock_quantity: 450,
-    order_frequency_days: 30,
-    order_volume: 1000,
-    ordering_channel: "Central Ordering Team",
-    lead_time_days: 14,
-    image_url: "https://images.unsplash.com/photo-1583485088034-09772569c262?w=150&auto=format&fit=crop&q=60"
-  },
-  {
-    article_number: "DS-1002",
-    description: "Cotton Cards Elegant Ivory (A6)",
-    barcode: "8901034001029",
-    smallest_unit_name: "Card",
-    units_per_box: 100,
-    boxes_per_pack: 10,
-    estimated_monthly_usage: 3000,
-    min_quantity: 500,
-    reorder_level: 1200,
-    max_quantity: 5000,
-    total_stock_quantity: 800,
-    order_frequency_days: 45,
-    order_volume: 3000,
-    ordering_channel: "Central Ordering Team",
-    lead_time_days: 20,
-    image_url: "https://images.unsplash.com/photo-1607344645866-009c320c5ab8?w=150&auto=format&fit=crop&q=60"
-  },
-  {
-    article_number: "DS-1003",
-    description: "Matte Black Kraft Gift Bags",
-    barcode: "8901034001036",
-    smallest_unit_name: "Bag",
-    units_per_box: 50,
-    boxes_per_pack: 8,
-    estimated_monthly_usage: 1200,
-    min_quantity: 150,
-    reorder_level: 300,
-    max_quantity: 1500,
-    total_stock_quantity: 280,
-    order_frequency_days: 15,
-    order_volume: 800,
-    ordering_channel: "Local",
-    lead_time_days: 3,
-    image_url: "https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=150&auto=format&fit=crop&q=60"
-  },
-  {
-    article_number: "DS-1004",
-    description: "Metallic Wax Seal Stamps",
-    barcode: "8901034001043",
-    smallest_unit_name: "Seal",
-    units_per_box: 200,
-    boxes_per_pack: 15,
-    estimated_monthly_usage: 9000,
-    min_quantity: 1000,
-    reorder_level: 2500,
-    max_quantity: 12000,
-    total_stock_quantity: 3500,
-    order_frequency_days: 20,
-    order_volume: 6000,
-    ordering_channel: "Local",
-    lead_time_days: 4,
-    image_url: "https://images.unsplash.com/photo-1516962215378-7fa2e137ae93?w=150&auto=format&fit=crop&q=60"
-  },
-  {
-    article_number: "DS-1005",
-    description: "Handmade Calligraphy Parchment (A4)",
-    barcode: "8901034001050",
-    smallest_unit_name: "Sheet",
-    units_per_box: 250,
-    boxes_per_pack: 4,
-    estimated_monthly_usage: 6000,
-    min_quantity: 800,
-    reorder_level: 1500,
-    max_quantity: 8000,
-    total_stock_quantity: 1200,
-    order_frequency_days: 25,
-    order_volume: 4000,
-    ordering_channel: "Central Ordering Team",
-    lead_time_days: 18,
-    image_url: "https://images.unsplash.com/photo-1586075010923-2dd4570fb338?w=150&auto=format&fit=crop&q=60"
-  },
-];
-
-const INITIAL_STOCK_TAKING_LOG: StockTakingLog[] = [
-  {
-    log_id: "LOG-1",
-    article_number: "DS-1001",
-    timestamp: "2026-07-15T08:00:00Z",
-    input_type: "Smallest Unit",
-    input_count: 500,
-    actual_quantity_units: 500,
-    expected_quantity_units: 520,
-    discrepancy_units: -20,
-    discrepancy_status: "Deficit",
-  },
-  {
-    log_id: "LOG-2",
-    article_number: "DS-1002",
-    timestamp: "2026-07-10T09:00:00Z",
-    input_type: "Pack",
-    input_count: 1, // 1 pack = 1000 cards
-    actual_quantity_units: 1000,
-    expected_quantity_units: 1000,
-    discrepancy_units: 0,
-    discrepancy_status: "Matched",
-  },
-];
-
-const INITIAL_PURCHASE_ORDERS: PurchaseOrder[] = [
-  {
-    po_number: "PO-2026-001",
-    article_number: "DS-1002",
-    order_date: "2026-07-10",
-    approval_date: "2026-07-10",
-    expected_delivery_date: "2026-07-30", // 2026-07-10 + 20 days lead time
-    order_quantity_units: 3000,
-    status: "Approved",
-  },
-  {
-    po_number: "PO-2026-002",
-    article_number: "DS-1005",
-    order_date: "2026-07-18",
-    expected_delivery_date: "2026-08-05", // 2026-07-18 + 18 days lead time
-    order_quantity_units: 4000,
-    status: "Raised",
-  },
-];
 
 // Helper Functions
 export function calculateDailyBurnRate(estimatedMonthlyUsage: number): number {
@@ -466,6 +334,13 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
 
 export async function deleteStockMasterFromFirestore(articleNumber: string) {
   try {
+    if (typeof window !== 'undefined') {
+      const deleted = JSON.parse(localStorage.getItem('delhi_deleted_articles') || '[]');
+      if (!deleted.includes(articleNumber)) {
+        deleted.push(articleNumber);
+        localStorage.setItem('delhi_deleted_articles', JSON.stringify(deleted));
+      }
+    }
     const docRef = doc(firestoreDb, 'stockMaster', articleNumber);
     await deleteDoc(docRef);
   } catch (err) {
@@ -582,31 +457,58 @@ export function subscribeToDatabase(
 
   const unsubStock = onSnapshot(collection(firestoreDb, 'stockMaster'), (snapshot) => {
     stockMasterLoaded = true;
+    const deletedArticles = new Set(JSON.parse((typeof window !== 'undefined' && localStorage.getItem('delhi_deleted_articles')) || '[]'));
+    
     if (snapshot.empty) {
       if (!isFirestoreInitialized) {
         isFirestoreInitialized = true;
         if (typeof window !== 'undefined') localStorage.setItem('delhi_stock_initialized', 'true');
         seedInitialFirestoreData();
-        return;
       }
-      currentStockMaster = [];
+      const localDb = loadDatabase();
+      const baseList = localDb.stockMaster.length > 0 ? localDb.stockMaster : INITIAL_STOCK_MASTER;
+      currentStockMaster = baseList.filter(item => !deletedArticles.has(item.article_number));
     } else {
       isFirestoreInitialized = true;
       if (typeof window !== 'undefined') localStorage.setItem('delhi_stock_initialized', 'true');
-      currentStockMaster = snapshot.docs.map(d => d.data() as StockMaster);
+      const firestoreItems = snapshot.docs.map(d => d.data() as StockMaster);
+      
+      const itemMap = new Map<string, StockMaster>();
+      INITIAL_STOCK_MASTER.forEach(item => itemMap.set(item.article_number, item));
+      const localDb = loadDatabase();
+      localDb.stockMaster.forEach(item => itemMap.set(item.article_number, item));
+      firestoreItems.forEach(item => itemMap.set(item.article_number, item));
+      
+      currentStockMaster = Array.from(itemMap.values()).filter(item => !deletedArticles.has(item.article_number));
     }
     notify();
   }, (err) => console.error('Firestore stockMaster snapshot error:', err));
 
   const unsubLogs = onSnapshot(collection(firestoreDb, 'stockTakingLogs'), (snapshot) => {
-    currentLogs = snapshot.docs.map(d => d.data() as StockTakingLog);
+    const firestoreLogs = snapshot.docs.map(d => d.data() as StockTakingLog);
+    const logMap = new Map<string, StockTakingLog>();
+    
+    INITIAL_STOCK_TAKING_LOG.forEach(log => logMap.set(log.log_id, log));
+    const localDb = loadDatabase();
+    localDb.stockTakingLog.forEach(log => logMap.set(log.log_id, log));
+    firestoreLogs.forEach(log => logMap.set(log.log_id, log));
+    
+    currentLogs = Array.from(logMap.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     if (stockMasterLoaded) {
       notify();
     }
   }, (err) => console.error('Firestore stockTakingLogs snapshot error:', err));
 
   const unsubPOs = onSnapshot(collection(firestoreDb, 'purchaseOrders'), (snapshot) => {
-    currentPOs = snapshot.docs.map(d => d.data() as PurchaseOrder);
+    const firestorePOs = snapshot.docs.map(d => d.data() as PurchaseOrder);
+    const poMap = new Map<string, PurchaseOrder>();
+    
+    INITIAL_PURCHASE_ORDERS.forEach(po => poMap.set(po.po_number, po));
+    const localDb = loadDatabase();
+    localDb.purchaseOrders.forEach(po => poMap.set(po.po_number, po));
+    firestorePOs.forEach(po => poMap.set(po.po_number, po));
+    
+    currentPOs = Array.from(poMap.values());
     if (stockMasterLoaded) {
       notify();
     }

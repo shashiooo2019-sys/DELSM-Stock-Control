@@ -8,6 +8,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeCanvas } from 'qrcode.react';
 import PublicSearch from '@/components/PublicSearch';
 import GoogleWorkspaceModal from '@/components/GoogleWorkspaceModal';
+import EditArticleModal from '@/components/EditArticleModal';
+import ItemPhotoModal from '@/components/ItemPhotoModal';
+import DeleteConfirmModal from '@/components/DeleteConfirmModal';
+import ManualPOModal from '@/components/ManualPOModal';
 import {
   Package,
   Barcode,
@@ -31,6 +35,7 @@ import {
   Volume2,
   VolumeX,
   Camera,
+  Eye,
   Database,
   CornerDownRight,
   RefreshCw,
@@ -420,186 +425,22 @@ export default function DelhiStationInventoryApp() {
     }
   };
 
-  const stopPhotoCamera = () => {
-    if (photoStreamRef.current) {
-      photoStreamRef.current.getTracks().forEach(track => track.stop());
-      photoStreamRef.current = null;
+  const getItemPhotoPath = (article_number?: string, image_url?: string) => {
+    if (image_url && image_url.trim() && !image_url.startsWith('data:')) {
+      return image_url;
     }
-    setIsCameraActive(false);
+    if (article_number) {
+      return `/inventory/${article_number}.jpg`;
+    }
+    return '/inventory/placeholder.jpg';
   };
 
-  const snapPhotoFromCamera = async () => {
-    if (!photoVideoRef.current || !activePhotoModalArticle) return;
-    const video = photoVideoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const maxDim = 800;
-    let w = canvas.width;
-    let h = canvas.height;
-    const resizedCanvas = document.createElement('canvas');
-    if (w > h) {
-      if (w > maxDim) {
-        h = Math.round((h * maxDim) / w);
-        w = maxDim;
-      }
-    } else {
-      if (h > maxDim) {
-        w = Math.round((w * maxDim) / h);
-        h = maxDim;
-      }
-    }
-    resizedCanvas.width = w;
-    resizedCanvas.height = h;
-    const rCtx = resizedCanvas.getContext('2d');
-    if (rCtx) {
-      rCtx.drawImage(canvas, 0, 0, w, h);
-    }
-    const dataUrl = resizedCanvas.toDataURL('image/webp', 0.8);
-    setStagedPhotoBase64(dataUrl);
-    setPhotoSuccessMsg("Photo snapped! Click 'Save to Firebase Database' below to persist.");
-    stopPhotoCamera();
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !activePhotoModalArticle) return;
-    try {
-      const compressedBase64 = await compressImageFile(file);
-      setStagedPhotoBase64(compressedBase64);
-      setPhotoSuccessMsg("Photo uploaded! Click 'Save to Firebase Database' below to persist.");
-    } catch (err) {
-      console.error("Error processing file:", err);
-      alert("Error processing image file.");
-    }
-  };
-
-  const handleSavePhotoToFirebase = async () => {
-    if (!activePhotoModalArticle) return;
-    const photoToSave = stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url;
-    if (!photoToSave) {
-      alert("No photo available to save.");
-      return;
-    }
-
-    setIsSavingPhoto(true);
-    setPhotoSuccessMsg(null);
-    try {
-      let savedServerUrl = photoToSave;
-      if (photoToSave.startsWith('data:image')) {
-        const uploadRes = await fetch('/api/upload-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            article_number: activePhotoModalArticle.article_number,
-            image_base64: photoToSave
-          })
-        });
-        const uploadData = await uploadRes.json();
-        if (uploadData.success && uploadData.image_url) {
-          savedServerUrl = uploadData.image_url;
-        }
-      }
-
-      let updatedItem: StockMaster | undefined;
-      const updatedMaster = db.stockMaster.map(item => {
-        if (item.article_number === activePhotoModalArticle.article_number) {
-          updatedItem = { 
-            ...item, 
-            image_url: savedServerUrl, 
-            image_base64: savedServerUrl.startsWith('data:') ? savedServerUrl : undefined
-          };
-          return updatedItem;
-        }
-        return item;
-      });
-
-      const newDb = { ...db, stockMaster: updatedMaster };
-      updateDb(newDb);
-
-      if (updatedItem) {
-        await saveStockMasterToFirestore(updatedItem);
-        setStagedPhotoBase64(null);
-        setActivePhotoModalArticle(updatedItem);
-        setPhotoSuccessMsg("Photo saved to App Files & Firebase Database!");
-        setTimeout(() => setPhotoSuccessMsg(null), 5000);
-      }
-    } catch (err: any) {
-      console.error("Failed to save image to Server/Firebase:", err);
-      alert("Failed to save image to server or Firebase database.");
-    } finally {
-      setIsSavingPhoto(false);
-    }
-  };
-
-  const handleDeletePhotoFromFirebase = async () => {
-    if (!activePhotoModalArticle) return;
-    if (!confirm("Are you sure you want to delete this photo from App Files & Firebase Database?")) return;
-
-    setIsSavingPhoto(true);
-    setPhotoSuccessMsg(null);
-    try {
-      await fetch(`/api/upload-image?article_number=${encodeURIComponent(activePhotoModalArticle.article_number)}`, {
-        method: 'DELETE'
-      });
-
-      let updatedItem: StockMaster | undefined;
-      const updatedMaster = db.stockMaster.map(item => {
-        if (item.article_number === activePhotoModalArticle.article_number) {
-          updatedItem = { 
-            ...item, 
-            image_base64: undefined, 
-            image_url: undefined 
-          };
-          return updatedItem;
-        }
-        return item;
-      });
-
-      const newDb = { ...db, stockMaster: updatedMaster };
-      updateDb(newDb);
-
-      if (updatedItem) {
-        await saveStockMasterToFirestore(updatedItem);
-        setStagedPhotoBase64(null);
-        setActivePhotoModalArticle(updatedItem);
-        setPhotoSuccessMsg("Photo deleted from App Files & Firebase Database.");
-        setTimeout(() => setPhotoSuccessMsg(null), 5000);
-      }
-    } catch (err: any) {
-      console.error("Failed to delete photo from App Files/Firebase:", err);
-      alert("Error deleting photo from server/database.");
-    } finally {
-      setIsSavingPhoto(false);
-    }
-  };
-
-  const updateArticlePhoto = (articleNumber: string, base64Str: string | null) => {
-    let updatedItem: StockMaster | undefined;
-    const updatedMaster = db.stockMaster.map(item => {
-      if (item.article_number === articleNumber) {
-        updatedItem = { ...item, image_base64: base64Str || '', image_url: base64Str || '' };
-        return updatedItem;
-      }
-      return item;
-    });
-    const newDb = { ...db, stockMaster: updatedMaster };
-    updateDb(newDb);
-    if (updatedItem) {
-      saveStockMasterToFirestore(updatedItem);
-    }
-    if (activePhotoModalArticle && activePhotoModalArticle.article_number === articleNumber) {
-      const updated = updatedMaster.find(m => m.article_number === articleNumber) || null;
-      setActivePhotoModalArticle(updated);
-    }
+  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    e.currentTarget.src = "/inventory/placeholder.jpg";
   };
 
   const ItemPhotoTrigger = ({ item }: { item: StockMaster }) => {
-    const photoSrc = item.image_base64 || item.image_url;
+    const photoSrc = getItemPhotoPath(item.article_number, item.image_url);
     return (
       <button
         type="button"
@@ -608,21 +449,19 @@ export default function DelhiStationInventoryApp() {
           setActivePhotoModalArticle(item);
         }}
         className="relative group shrink-0 focus:outline-none cursor-pointer inline-flex items-center"
-        title={photoSrc ? "Click to view or replace photo" : "Click to add item photo"}
+        title="Click to view item photo"
       >
-        {photoSrc ? (
-          <div className="relative w-8 h-8 rounded-full overflow-hidden border border-slate-300 shadow-xs hover:ring-2 hover:ring-amber-400 transition">
-            <img src={photoSrc} alt={item.description} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-              <Camera className="w-3.5 h-3.5 text-white" />
-            </div>
+        <div className="relative w-8 h-8 rounded-full overflow-hidden border border-slate-300 shadow-xs hover:ring-2 hover:ring-amber-400 transition">
+          <img 
+            src={photoSrc} 
+            alt={item.description} 
+            onError={handleImgError}
+            className="w-full h-full object-cover" 
+          />
+          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+            <Eye className="w-3.5 h-3.5 text-white" />
           </div>
-        ) : (
-          <div className="relative w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-300 flex items-center justify-center transition text-slate-500 shadow-xs">
-            <Camera className="w-4 h-4" />
-            <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full w-3.5 h-3.5 text-[9px] font-bold flex items-center justify-center shadow-xs">+</span>
-          </div>
-        )}
+        </div>
       </button>
     );
   };
@@ -2844,13 +2683,12 @@ export default function DelhiStationInventoryApp() {
                                     {/* Article Details Column */}
                                     <td className="p-3 min-w-[200px]">
                                       <div className="flex items-center gap-2.5">
-                                        {article.image_url ? (
-                                          <img src={article.image_url} alt={article.description} className="w-10 h-10 rounded-md object-cover border border-slate-200 shrink-0" />
-                                        ) : (
-                                          <div className="w-10 h-10 rounded-md bg-slate-100 flex items-center justify-center border border-slate-200 shrink-0">
-                                            <Package className="w-5 h-5 text-slate-400" />
-                                          </div>
-                                        )}
+                                        <img 
+                                          src={getItemPhotoPath(article.article_number, article.image_url)} 
+                                          alt={article.description} 
+                                          onError={handleImgError}
+                                          className="w-10 h-10 rounded-md object-cover border border-slate-200 shrink-0" 
+                                        />
                                         <div className="min-w-0">
                                           <div className="flex flex-wrap items-center gap-1.5">
                                             <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1 rounded text-[10px]">
@@ -3224,7 +3062,7 @@ export default function DelhiStationInventoryApp() {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                     {filteredArticles.map((article, index) => {
-                      const photoSrc = article.image_base64 || article.image_url;
+                      const photoSrc = getItemPhotoPath(article.article_number, article.image_url);
                       const isSelected = selectedArticleNumbers.includes(article.article_number);
                       
                       // Status marker color calculation:
@@ -3274,9 +3112,7 @@ export default function DelhiStationInventoryApp() {
                                   src={photoSrc} 
                                   alt={article.description} 
                                   className="w-full h-full object-cover group-hover/img:scale-105 transition-transform duration-300"
-                                  onError={(e) => {
-                                    (e.target as any).src = "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=400&auto=format&fit=crop&q=80";
-                                  }}
+                                  onError={handleImgError}
                                 />
                               ) : (
                                 <div className="w-full h-full bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 flex flex-col items-center justify-center p-4 text-center">
@@ -3560,20 +3396,12 @@ export default function DelhiStationInventoryApp() {
                                     </td>
                                     <td className="p-4 max-w-sm">
                                       <div className="flex items-start gap-3">
-                                        {article.image_url ? (
-                                          <img 
-                                            src={article.image_url} 
-                                            alt={article.description} 
-                                            className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0 mt-0.5"
-                                            onError={(e) => {
-                                              (e.target as any).src = "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=150&auto=format&fit=crop&q=60";
-                                            }}
-                                          />
-                                        ) : (
-                                          <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center border border-slate-200 shrink-0 mt-0.5">
-                                            <Package className="w-6 h-6 text-slate-400" />
-                                          </div>
-                                        )}
+                                        <img 
+                                          src={getItemPhotoPath(article.article_number, article.image_url)} 
+                                          alt={article.description} 
+                                          onError={handleImgError}
+                                          className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0 mt-0.5"
+                                        />
                                         <div className="space-y-1">
                                           <div className="flex items-center gap-1.5 flex-wrap">
                                             <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">
@@ -3755,20 +3583,12 @@ export default function DelhiStationInventoryApp() {
                             </td>
                             <td className="p-4 max-w-sm">
                               <div className="flex items-start gap-3">
-                                {article.image_url ? (
-                                  <img 
-                                    src={article.image_url} 
-                                    alt={article.description} 
-                                    className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0 mt-0.5"
-                                    onError={(e) => {
-                                      (e.target as any).src = "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=150&auto=format&fit=crop&q=60";
-                                    }}
-                                  />
-                                ) : (
-                                  <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center border border-slate-200 shrink-0 mt-0.5">
-                                    <Package className="w-6 h-6 text-slate-400" />
-                                  </div>
-                                )}
+                                <img 
+                                  src={getItemPhotoPath(article.article_number, article.image_url)} 
+                                  alt={article.description} 
+                                  onError={handleImgError}
+                                  className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0 mt-0.5"
+                                />
                                 <div className="space-y-1">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">
@@ -5012,275 +4832,36 @@ export default function DelhiStationInventoryApp() {
       {/* ----------------------------------------------------
           ADD / EDIT ARTICLE DETAILS DIALOG
           ---------------------------------------------------- */}
-      {isArticleModalOpen && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-base text-slate-900">
-                {editingArticle ? "Edit Master Stock Article" : "Create Master Stock Article"}
-              </h3>
-              <button 
-                onClick={() => setIsArticleModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg font-semibold"
-              >
-                &times;
-              </button>
-            </div>
+      <EditArticleModal
+        isOpen={isArticleModalOpen}
+        onClose={() => setIsArticleModalOpen(false)}
+        editingArticle={editingArticle}
+        articleForm={articleForm}
+        setArticleForm={setArticleForm}
+        handleSaveArticle={handleSaveArticle}
+        handleDeleteArticle={handleDeleteArticle}
+        currentUser={currentUser}
+        getItemPhotoPath={getItemPhotoPath}
+        handleImgError={handleImgError}
+        onPhotoUploaded={(artNum, freshUrl) => {
+          const updatedMaster = db.stockMaster.map((item) =>
+            item.article_number === artNum ? { ...item, image_url: freshUrl } : item
+          );
+          const nextDb = {
+            ...db,
+            stockMaster: updatedMaster
+          };
+          setDb(nextDb);
+          saveDatabase(nextDb);
 
-            <form onSubmit={handleSaveArticle} className="space-y-4 text-xs">
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Article Number (Unique ID)</label>
-                  <input
-                    type="text"
-                    disabled={!!editingArticle}
-                    value={articleForm.article_number}
-                    onChange={(e) => setArticleForm({ ...articleForm, article_number: e.target.value })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Barcode (Scannable Code)</label>
-                  <input
-                    type="text"
-                    value={articleForm.barcode}
-                    onChange={(e) => setArticleForm({ ...articleForm, barcode: e.target.value })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-500 font-semibold mb-1">Description</label>
-                <input
-                  type="text"
-                  value={articleForm.description}
-                  onChange={(e) => setArticleForm({ ...articleForm, description: e.target.value })}
-                  placeholder="e.g. Handmade Calligraphy Parchment Paper"
-                  className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-500 font-semibold mb-1">General Location / Store</label>
-                <input
-                  type="text"
-                  value={articleForm.location}
-                  onChange={(e) => setArticleForm({ ...articleForm, location: e.target.value })}
-                  placeholder="e.g. Storage Room A, Bin 12"
-                  className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Quantity Details (Short Text)</label>
-                  <input
-                    type="text"
-                    value={articleForm.quantity_details || ''}
-                    onChange={(e) => setArticleForm({ ...articleForm, quantity_details: e.target.value })}
-                    placeholder="e.g. Bulk pack / Box of 10"
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Add Info / Notes (Short Text)</label>
-                  <input
-                    type="text"
-                    value={articleForm.add_info || ''}
-                    onChange={(e) => setArticleForm({ ...articleForm, add_info: e.target.value })}
-                    placeholder="e.g. Fragile / Standard stock"
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-500 font-semibold mb-1">Item Image</label>
-                <div className="flex items-center gap-4">
-                  {(articleForm.image_base64 || articleForm.image_url) && (
-                    <img 
-                      src={articleForm.image_base64 || articleForm.image_url} 
-                      alt="Preview" 
-                      className="w-16 h-16 object-cover rounded-lg border border-slate-200"
-                    />
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="text-xs"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Smallest Unit Name</label>
-                  <input
-                    type="text"
-                    value={articleForm.smallest_unit_name}
-                    onChange={(e) => setArticleForm({ ...articleForm, smallest_unit_name: e.target.value })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Units per Box</label>
-                  <input
-                    type="number"
-                    value={articleForm.units_per_box}
-                    onChange={(e) => setArticleForm({ ...articleForm, units_per_box: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Boxes per Pack</label>
-                  <input
-                    type="number"
-                    value={articleForm.boxes_per_pack}
-                    onChange={(e) => setArticleForm({ ...articleForm, boxes_per_pack: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Est. Monthly Usage (Smallest Units)</label>
-                  <input
-                    type="number"
-                    value={articleForm.estimated_monthly_usage}
-                    onChange={(e) => setArticleForm({ ...articleForm, estimated_monthly_usage: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Standard PO Volume (Units)</label>
-                  <input
-                    type="number"
-                    value={articleForm.order_volume}
-                    onChange={(e) => setArticleForm({ ...articleForm, order_volume: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Min Level</label>
-                  <input
-                    type="number"
-                    value={articleForm.min_quantity}
-                    onChange={(e) => setArticleForm({ ...articleForm, min_quantity: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Reorder Level</label>
-                  <input
-                    type="number"
-                    value={articleForm.reorder_level}
-                    onChange={(e) => setArticleForm({ ...articleForm, reorder_level: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Max Level</label>
-                  <input
-                    type="number"
-                    value={articleForm.max_quantity}
-                    onChange={(e) => setArticleForm({ ...articleForm, max_quantity: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Total Stock Qty</label>
-                  <input
-                    type="number"
-                    value={articleForm.total_stock_quantity}
-                    onChange={(e) => setArticleForm({ ...articleForm, total_stock_quantity: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-slate-500 font-semibold mb-1">Ordering Route Channel</label>
-                  <select
-                    value={articleForm.ordering_channel}
-                    onChange={(e) => setArticleForm({ ...articleForm, ordering_channel: e.target.value as OrderingChannel })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50"
-                  >
-                    <option value="Local">Local</option>
-                    <option value="Central Ordering Team">Central Ordering Team</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Lead Time (Days)</label>
-                  <input
-                    type="number"
-                    value={articleForm.lead_time_days}
-                    onChange={(e) => setArticleForm({ ...articleForm, lead_time_days: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 font-mono"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
-                {editingArticle && currentUser?.role === 'admin' ? (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteArticle(editingArticle.article_number)}
-                    className="bg-red-50 hover:bg-red-100 text-red-600 font-bold px-4 py-2 rounded-lg border border-red-200 transition flex items-center gap-1.5 cursor-pointer"
-                    title="Delete Article Spec (Admin Access)"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span>Delete Article</span>
-                  </button>
-                ) : <div />}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsArticleModalOpen(false)}
-                    className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold px-4 py-2 rounded-lg transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm hover:shadow"
-                  >
-                    Save Item Spec
-                  </button>
-                </div>
-              </div>
-
-            </form>
-          </div>
-        </div>
-      )}
+          const updatedItem = updatedMaster.find((item) => item.article_number === artNum);
+          if (updatedItem) {
+            saveStockMasterToFirestore(updatedItem).catch((err) => {
+              console.error("Error persisting photo upload to Firestore:", err);
+            });
+          }
+        }}
+      />
 
       {isExcelImportModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-xs">
@@ -5944,172 +5525,17 @@ export default function DelhiStationInventoryApp() {
         </div>
       )}
 
-      {isManualPOModalOpen && (
-        <div className="fixed inset-0 bg-black/55 z-55 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Plus className="w-4 h-4 text-amber-500" />
-                <h3 className="font-bold text-base text-slate-900">
-                  Create Manual Purchase Order
-                </h3>
-              </div>
-              <button 
-                onClick={() => setIsManualPOModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg font-semibold"
-              >
-                &times;
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateManualPO} className="space-y-4 text-xs">
-              <div>
-                <label className="block text-slate-500 font-semibold mb-1">Select Article</label>
-                <select
-                  value={manualPOForm.article_number}
-                  onChange={(e) => {
-                    const article = db.stockMaster.find(m => m.article_number === e.target.value);
-                    if (article) {
-                      setManualPOForm({
-                        ...manualPOForm,
-                        article_number: e.target.value,
-                        order_quantity_units: article.order_volume,
-                        lead_time_days: article.lead_time_days
-                      });
-                    }
-                  }}
-                  className="w-full border border-slate-200 p-2.5 rounded-lg bg-slate-50 text-slate-800 font-sans focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition outline-none"
-                  required
-                >
-                  {db.stockMaster.map(item => (
-                    <option key={item.article_number} value={item.article_number}>
-                      {item.article_number} - {item.description}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Dynamic Suggested Quantity Display */}
-              {(() => {
-                const computedArticle = filteredArticles.find(a => a.article_number === manualPOForm.article_number);
-                if (!computedArticle) return null;
-                const suggestedQty = Math.max(0, computedArticle.max_quantity - computedArticle.currentStock);
-                return (
-                  <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-semibold text-amber-900">Suggested Order Qty:</div>
-                      <div className="text-[10px] text-slate-500">To reach Maximum Capacity ({(computedArticle.max_quantity ?? 0).toLocaleString()} units)</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-amber-800 text-xs">
-                        {(suggestedQty ?? 0) > 0 ? `${(suggestedQty ?? 0).toLocaleString()} units` : "Fully Stocked (Standard Recommended)"}
-                      </span>
-                      {suggestedQty > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setManualPOForm({ ...manualPOForm, order_quantity_units: suggestedQty })}
-                          className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-2 py-1 rounded text-[10px] font-bold shadow-xs transition"
-                        >
-                          Use Suggested
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Order Quantity (Units)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={manualPOForm.order_quantity_units}
-                    onChange={(e) => {
-                      setManualPOForm({ ...manualPOForm, order_quantity_units: Number(e.target.value) });
-                      if (Number(e.target.value) > 0) setQuantityError('');
-                    }}
-                    className={`w-full border p-2.5 rounded-lg bg-slate-50 text-slate-800 font-mono focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition outline-none ${quantityError ? 'border-red-500' : 'border-slate-200'}`}
-                    required
-                  />
-                  {quantityError && <p className="text-[10px] text-red-600 mt-1">{quantityError}</p>}
-                </div>
-
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Lead Time (Days)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={manualPOForm.lead_time_days}
-                    onChange={(e) => setManualPOForm({ ...manualPOForm, lead_time_days: Number(e.target.value) })}
-                    className="w-full border border-slate-200 p-2.5 rounded-lg bg-slate-50 text-slate-800 font-mono focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition outline-none"
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Real-time Packaging Conversion Display */}
-              {(() => {
-                const selectedArticle = db.stockMaster.find(item => item.article_number === manualPOForm.article_number);
-                if (!selectedArticle) return null;
-                const qty = manualPOForm.order_quantity_units || 0;
-                const unitsPerPack = selectedArticle.boxes_per_pack * selectedArticle.units_per_box;
-                const packs = Math.floor(qty / unitsPerPack);
-                const remainderAfterPacks = qty % unitsPerPack;
-                const boxes = Math.floor(remainderAfterPacks / selectedArticle.units_per_box);
-                const smallestUnits = remainderAfterPacks % selectedArticle.units_per_box;
-
-                const parts = [];
-                if (packs > 0) parts.push(`${packs} Pack(s)`);
-                if (boxes > 0) parts.push(`${boxes} Box(es)`);
-                if (smallestUnits > 0 || parts.length === 0) parts.push(`${smallestUnits} ${selectedArticle.smallest_unit_name}(s)`);
-                const packagingText = parts.join(" + ");
-
-                return (
-                  <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-3 space-y-1">
-                    <span className="font-semibold text-indigo-950 block">Real-time Packaging Conversion:</span>
-                    <div className="font-mono text-indigo-900 font-bold text-xs">
-                      {packagingText}
-                    </div>
-                    <div className="text-[10px] text-slate-400">
-                      Conversion factor: 1 Pack = {selectedArticle.boxes_per_pack} Boxes ({unitsPerPack} {selectedArticle.smallest_unit_name}s) | 1 Box = {selectedArticle.units_per_box} {selectedArticle.smallest_unit_name}s
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 space-y-1 text-[11px] text-slate-500 font-sans">
-                <span className="font-semibold text-slate-600 block mb-0.5">PO Target Metrics:</span>
-                <div>
-                  Expected Delivery: <strong className="text-slate-700">
-                    {(() => {
-                      const expectedDel = new Date(simulatedDate);
-                      expectedDel.setDate(expectedDel.getDate() + (manualPOForm.lead_time_days || 0));
-                      return expectedDel.toISOString().split('T')[0];
-                    })()}
-                  </strong>
-                </div>
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsManualPOModalOpen(false)}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold px-4 py-2 rounded-lg transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2 rounded-lg transition shadow-sm hover:shadow"
-                >
-                  Place PO Order
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ManualPOModal
+        isOpen={isManualPOModalOpen}
+        onClose={() => setIsManualPOModalOpen(false)}
+        stockMaster={db.stockMaster}
+        filteredArticles={filteredArticles}
+        manualPOForm={manualPOForm}
+        setManualPOForm={setManualPOForm}
+        quantityError={quantityError}
+        setQuantityError={setQuantityError}
+        handleCreateManualPO={handleCreateManualPO}
+      />
 
       {/* ----------------------------------------------------
           INTERACTIVE PURCHASE ORDER WORKFLOW DIALOG
@@ -6450,157 +5876,31 @@ export default function DelhiStationInventoryApp() {
         </button>
       </div>
 
-      {/* MANAGE ITEM PHOTO MODAL */}
-      {activePhotoModalArticle && (
-        <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="font-bold text-base text-slate-900 font-display">Manage Item Photo</h3>
-                <p className="text-[11px] text-slate-500 font-mono">{activePhotoModalArticle.article_number} — {activePhotoModalArticle.description}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  stopPhotoCamera();
-                  setStagedPhotoBase64(null);
-                  setPhotoSuccessMsg(null);
-                  setActivePhotoModalArticle(null);
-                }}
-                className="text-slate-400 hover:text-slate-600 text-xl font-bold p-1 cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
+      <ItemPhotoModal
+        article={activePhotoModalArticle}
+        onClose={() => setActivePhotoModalArticle(null)}
+        getItemPhotoPath={getItemPhotoPath}
+        handleImgError={handleImgError}
+        setLightboxImageUrl={setLightboxImageUrl}
+        onPhotoUploaded={(artNum, freshUrl) => {
+          const updatedMaster = db.stockMaster.map((item) =>
+            item.article_number === artNum ? { ...item, image_url: freshUrl } : item
+          );
+          const nextDb = {
+            ...db,
+            stockMaster: updatedMaster
+          };
+          setDb(nextDb);
+          saveDatabase(nextDb);
 
-            <div className="space-y-4">
-              {photoSuccessMsg && (
-                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-3.5 py-2.5 rounded-xl font-medium flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{photoSuccessMsg}</span>
-                </div>
-              )}
-
-              {isCameraActive ? (
-                <div className="relative rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center border border-slate-200 shadow-inner">
-                  <video ref={photoVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                  <div className="absolute bottom-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={snapPhotoFromCamera}
-                      className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2 rounded-lg shadow-lg flex items-center gap-1.5 text-xs transition cursor-pointer"
-                    >
-                      <Camera className="w-4 h-4" /> Snap Photo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={stopPhotoCamera}
-                      className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-2 rounded-lg shadow-lg text-xs transition cursor-pointer"
-                    >
-                      Cancel Camera
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center p-6 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
-                  {(stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url) ? (
-                    <div className="relative group">
-                      <img
-                        src={stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url}
-                        alt={activePhotoModalArticle.description}
-                        className="w-44 h-44 object-cover rounded-xl border border-slate-300 shadow-md cursor-pointer"
-                        onClick={() => setLightboxImageUrl(stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url || null)}
-                        title="Click to expand view"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setLightboxImageUrl(stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url || null)}
-                        className="absolute bottom-2 right-2 bg-black/60 hover:bg-black text-white p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition shadow"
-                        title="Expand View"
-                      >
-                        <Maximize2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="w-24 h-24 rounded-2xl bg-slate-200/70 border border-slate-300 flex items-center justify-center text-slate-400">
-                      <Camera className="w-10 h-10" />
-                    </div>
-                  )}
-
-                  <div className="text-center space-y-1">
-                    {stagedPhotoBase64 ? (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-800 bg-amber-100 px-3 py-1 rounded-full border border-amber-300 animate-pulse">
-                        <AlertCircle className="w-3.5 h-3.5 text-amber-600" /> Photo Uploaded (Ready to Save)
-                      </span>
-                    ) : (activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url) ? (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Photo Synced in Firebase DB
-                      </span>
-                    ) : (
-                      <span className="text-xs font-semibold text-slate-500">No Photo Attached</span>
-                    )}
-                    <p className="text-[10px] text-slate-400">Compressed & synchronized with Firestore database</p>
-                  </div>
-                </div>
-              )}
-
-              {!isCameraActive && (
-                <div className="space-y-3 pt-1">
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs p-2.5 rounded-lg transition shadow-sm hover:shadow flex items-center justify-center gap-1.5 cursor-pointer">
-                      <Upload className="w-4 h-4" />
-                      {(stagedPhotoBase64 || activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url) ? "Choose File" : "Upload File"}
-                      <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-                    </label>
-
-                    <button
-                      type="button"
-                      onClick={startPhotoCamera}
-                      className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs p-2.5 rounded-lg transition shadow-sm hover:shadow flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Camera className="w-4 h-4" />
-                      Use Camera
-                    </button>
-                  </div>
-
-                  {/* SAVE TO SERVER (FIREBASE DATABASE) BUTTON */}
-                  <div className="pt-2">
-                    <button
-                      type="button"
-                      disabled={!stagedPhotoBase64 || isSavingPhoto}
-                      onClick={handleSavePhotoToFirebase}
-                      className={`w-full py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition shadow-md ${
-                        stagedPhotoBase64 && !isSavingPhoto
-                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer ring-2 ring-emerald-400/50 shadow-lg animate-pulse'
-                          : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                      }`}
-                    >
-                      <CloudUpload className="w-4 h-4" />
-                      {isSavingPhoto ? "Saving to Firebase Database..." : "Save to Firebase Database"}
-                    </button>
-                    <p className="text-[10px] text-center text-slate-400 mt-1">
-                      {stagedPhotoBase64 
-                        ? "Photo is staged! Click above to save permanently to Cloud Database." 
-                        : "Upload a file or take a photo above to enable saving to Firebase Database."}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {(activePhotoModalArticle.image_base64 || activePhotoModalArticle.image_url || stagedPhotoBase64) && !isCameraActive && (
-                <button
-                  type="button"
-                  onClick={handleDeletePhotoFromFirebase}
-                  className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs p-2.5 rounded-lg border border-red-200 transition flex items-center justify-center gap-1.5 cursor-pointer mt-1"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete Photo from Database
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+          const updatedItem = updatedMaster.find((item) => item.article_number === artNum);
+          if (updatedItem) {
+            saveStockMasterToFirestore(updatedItem).catch((err) => {
+              console.error("Error persisting photo upload to Firestore from modal:", err);
+            });
+          }
+        }}
+      />
 
       {/* FULL-SCREEN LIGHTBOX OVERLAY */}
       {lightboxImageUrl && (
