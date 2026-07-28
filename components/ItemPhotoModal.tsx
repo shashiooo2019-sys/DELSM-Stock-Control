@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { StockMaster } from '@/lib/db';
+import { StockMaster, saveStockMasterToFirestore } from '@/lib/db';
 import { CheckCircle2, Maximize2, Upload, Camera, RefreshCw, X } from 'lucide-react';
+import { storage } from '@/lib/firebase';
+import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 
 interface ItemPhotoModalProps {
   article: StockMaster | null;
@@ -80,31 +82,27 @@ export default function ItemPhotoModal({
     setSuccessMsg(null);
 
     try {
-      const compressedBase64 = await compressImageFile(file);
+      const dataUrl = await compressImageFile(file);
 
-      const res = await fetch('/api/upload-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          article_number: article.article_number,
-          image_base64: compressedBase64,
-        }),
+      // Upload to Firebase Storage
+      const storageRef = ref(storage, `article_photos/${article.article_number}.webp`);
+      await uploadString(storageRef, dataUrl, 'data_url');
+      const downloadURL = await getDownloadURL(storageRef);
+
+      // Update Firestore with new image_url
+      await saveStockMasterToFirestore({
+        ...article,
+        image_url: downloadURL
       });
 
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        throw new Error(data.error || 'Failed to upload photo');
-      }
-
-      const freshUrl = data.image_url || `/inventory/${article.article_number}.jpg?t=${Date.now()}`;
-      setCustomPhotoUrl(freshUrl);
+      setCustomPhotoUrl(downloadURL);
       if (onPhotoUploaded) {
-        onPhotoUploaded(article.article_number, freshUrl, compressedBase64);
+        onPhotoUploaded(article.article_number, downloadURL, dataUrl);
       }
-      setSuccessMsg(`Photo updated in repository (/public/inventory/${article.article_number}.jpg)`);
+      setSuccessMsg(`Photo updated successfully in Firebase Storage.`);
     } catch (err: any) {
-      console.error('Error uploading photo:', err);
-      setErrorMsg(err.message || 'Error saving photo to repository');
+      console.error('Error uploading photo to Firebase Storage:', err);
+      setErrorMsg(err.message || 'Error saving photo to Firebase Storage');
     } finally {
       setIsUploading(false);
     }
