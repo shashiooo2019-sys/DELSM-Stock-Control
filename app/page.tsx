@@ -5786,6 +5786,7 @@ export default function DelhiStationInventoryApp() {
       </div>
 
       <ItemPhotoModal
+        enabled={process.env.NODE_ENV !== 'production'}
         article={activePhotoModalArticle}
         onClose={() => setActivePhotoModalArticle(null)}
         getItemPhotoPath={getItemPhotoPath}

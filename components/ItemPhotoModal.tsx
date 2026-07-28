@@ -13,6 +13,7 @@ interface ItemPhotoModalProps {
   handleImgError: (e: React.SyntheticEvent<HTMLImageElement, Event>) => void;
   setLightboxImageUrl: (url: string | null) => void;
   onPhotoUploaded?: (articleNumber: string, newUrl: string, base64?: string) => void;
+  enabled?: boolean;
 }
 
 export default function ItemPhotoModal({
@@ -22,7 +23,9 @@ export default function ItemPhotoModal({
   handleImgError,
   setLightboxImageUrl,
   onPhotoUploaded,
+  enabled = true,
 }: ItemPhotoModalProps) {
+  if (!enabled || !article) return null;
   const [isUploading, setIsUploading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
