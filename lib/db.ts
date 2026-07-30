@@ -190,6 +190,101 @@ export function getExpectedStock(
   return Math.max(0, isNaN(expectedStock) ? 0 : Math.round(expectedStock));
 }
 
+export interface DetailedStockEstimation {
+  lastCountDateStr: string;
+  lastCountQuantity: number;
+  daysElapsedSinceCount: number;
+  scenarioDaysOffset: number;
+  totalDaysElapsed: number;
+  dailyBurnRate: number;
+  projectedStockUnits: number;
+  daysStockLeft: number;
+  leadTimeDays: number;
+  isBelowLeadTime: boolean;
+  statusText: string;
+}
+
+export function getDetailedStockEstimation(
+  article: StockMaster,
+  targetDateStr: string,
+  scenarioDaysOffset: number,
+  logs: StockTakingLog[],
+  stockMaster: StockMaster[]
+): DetailedStockEstimation {
+  // 1. Calculate effective target date
+  const baseDate = new Date(targetDateStr.includes('T') ? targetDateStr : targetDateStr + 'T12:00:00Z');
+  const effectiveDate = new Date(baseDate);
+  if (!isNaN(scenarioDaysOffset) && scenarioDaysOffset !== 0) {
+    effectiveDate.setDate(effectiveDate.getDate() + scenarioDaysOffset);
+  }
+  const effectiveTargetTime = effectiveDate.getTime();
+
+  // 2. Find most recent stock count log or fallback to initial stock date
+  const articleLogs = (logs || [])
+    .filter(log => log.article_number === article.article_number)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  let lastCountTime: number;
+  let lastCountQuantity: number;
+  let lastCountDateStr: string;
+
+  if (articleLogs.length > 0) {
+    const mostRecentLog = articleLogs[0];
+    lastCountTime = new Date(mostRecentLog.timestamp).getTime();
+    lastCountQuantity = isNaN(mostRecentLog.actual_quantity_units) ? 0 : mostRecentLog.actual_quantity_units;
+    lastCountDateStr = mostRecentLog.timestamp.split('T')[0];
+  } else {
+    lastCountTime = new Date("2026-07-01T00:00:00Z").getTime();
+    lastCountQuantity = !isNaN(article.total_stock_quantity) ? article.total_stock_quantity : 0;
+    lastCountDateStr = "2026-07-01";
+  }
+
+  const validTarget = isNaN(effectiveTargetTime) ? Date.now() : effectiveTargetTime;
+  const validLast = isNaN(lastCountTime) ? validTarget : lastCountTime;
+  const msElapsed = validTarget - validLast;
+  const totalDaysElapsed = Math.max(0, isNaN(msElapsed) ? 0 : msElapsed / (1000 * 60 * 60 * 24));
+  const baseTargetTime = isNaN(baseDate.getTime()) ? Date.now() : baseDate.getTime();
+  const daysElapsedSinceCount = Math.max(0, Math.floor((baseTargetTime - validLast) / (1000 * 60 * 60 * 24)));
+
+  // 3. Daily burn rate from monthly consumption
+  const dailyBurnRate = calculateDailyBurnRate(article.estimated_monthly_usage);
+
+  // 4. Projected Stock Units
+  const rawProjected = (lastCountQuantity ?? 0) - (totalDaysElapsed * dailyBurnRate);
+  const projectedStockUnits = Math.max(0, isNaN(rawProjected) ? 0 : Math.round(rawProjected));
+
+  // 5. Days Stock Left (Days Cover)
+  let daysStockLeft = 999;
+  if (dailyBurnRate > 0) {
+    daysStockLeft = Math.max(0, parseFloat((projectedStockUnits / dailyBurnRate).toFixed(1)));
+  }
+
+  // 6. Lead time check (LEAD DAYS)
+  const leadTimeDays = article.lead_time_days || 0;
+  const isBelowLeadTime = dailyBurnRate > 0 && daysStockLeft <= leadTimeDays;
+
+  let statusText = "Healthy Cover";
+  if (isBelowLeadTime) {
+    statusText = `CRITICAL: ${daysStockLeft}d Left <= ${leadTimeDays}d Lead Time`;
+  } else if (daysStockLeft <= leadTimeDays * 1.5) {
+    statusText = `WARNING: ${daysStockLeft}d Left (Close to Lead Time)`;
+  }
+
+  return {
+    lastCountDateStr,
+    lastCountQuantity,
+    daysElapsedSinceCount,
+    scenarioDaysOffset,
+    totalDaysElapsed: Math.round(totalDaysElapsed * 10) / 10,
+    dailyBurnRate,
+    projectedStockUnits,
+    daysStockLeft,
+    leadTimeDays,
+    isBelowLeadTime,
+    statusText,
+  };
+}
+
 export interface SuppressionResult {
   isSuppressed: boolean;
   activePO: PurchaseOrder | null;

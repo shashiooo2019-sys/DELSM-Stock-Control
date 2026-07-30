@@ -86,7 +86,9 @@ import {
   calculateDailyBurnRate,
   convertToSmallestUnits,
   getExpectedStock,
-  evaluateSuppression
+  evaluateSuppression,
+  getDetailedStockEstimation,
+  DetailedStockEstimation
 } from '@/lib/db';
 
 import {
@@ -198,13 +200,16 @@ export default function DelhiStationInventoryApp() {
     playBeep();
   };
 
-  // Simulation Date (starts at 2026-07-20 as per metadata)
+  // Simulation Date & Scenario Offset
   const [simulatedDate, setSimulatedDate] = useState<string>('2026-07-20');
+  const [scenarioDaysOffset, setScenarioDaysOffset] = useState<number>(0);
+  const [isProjDateModalOpen, setIsProjDateModalOpen] = useState(false);
+  const [pendingProjDate, setPendingProjDate] = useState<string>('');
   
   // Search and view states
   const [searchQuery, setSearchQuery] = useState('');
   const [channelFilter, setChannelFilter] = useState<'All' | 'Central' | 'Local'>('All');
-  const [stockFilter, setStockFilter] = useState<'All' | 'Healthy' | 'Low' | 'Action Needed' | 'Suppressed'>('All');
+  const [stockFilter, setStockFilter] = useState<'All' | 'Healthy' | 'Low' | 'Action Needed' | 'Suppressed' | 'Below Lead Days'>('All');
   const [locationFilter, setLocationFilter] = useState<string>('All');
   const [stockViewMode, setStockViewMode] = useState<'table' | 'grouped' | 'gridEdit'>('table');
   const [collapsedLocations, setCollapsedLocations] = useState<Record<string, boolean>>({});
@@ -387,6 +392,49 @@ export default function DelhiStationInventoryApp() {
   // Reset simulated date to today
   const resetToToday = () => {
     setSimulatedDate('2026-07-20');
+  };
+
+  const handleConfirmProjectedDate = async () => {
+    setIsProjDateModalOpen(false);
+    if (!pendingProjDate) return;
+
+    // 1. Calculate diff in days
+    const baseDate = new Date(simulatedDate);
+    const targetDate = new Date(pendingProjDate);
+    const diffTime = targetDate.getTime() - baseDate.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    // 2. Set scenarioDaysOffset
+    setScenarioDaysOffset(Math.max(0, diffDays));
+
+    // 3. Clear fields: Quantity details (quantity_details) and Current Stock (total_stock_quantity) for all articles
+    const updatedMaster = db.stockMaster.map(article => ({
+      ...article,
+      quantity_details: '',
+      total_stock_quantity: 0
+    }));
+
+    // 4. Delete all stock log records in Firestore
+    const logsToDelete = [...db.stockTakingLog];
+    logsToDelete.forEach(log => {
+      deleteStockLogFromFirestore(log.log_id).catch(err => {
+        console.error(`Failed to delete stock log ${log.log_id} from Firestore:`, err);
+      });
+    });
+
+    // 5. Update local database state
+    updateDb({
+      ...db,
+      stockMaster: updatedMaster,
+      stockTakingLog: []
+    });
+
+    // 6. Update all articles in Firestore
+    try {
+      await Promise.all(updatedMaster.map(item => saveStockMasterToFirestore(item)));
+    } catch (err) {
+      console.error("Failed to batch update stockMaster in Firestore:", err);
+    }
   };
 
   // ----------------------------------------------------
@@ -1411,43 +1459,43 @@ export default function DelhiStationInventoryApp() {
   // DERIVED COMPUTATIONS & ANALYTICS
   // ----------------------------------------------------
   
-  // 1. Compute dynamic current stock for each item based on simulatedDate
-  // and evaluate alert/suppression states
+  // 1. Compute dynamic current stock for each item based on last count date, monthly consumption, and scenario offset
   const evaluatedArticles = useMemo(() => {
     return db.stockMaster.map(article => {
-      const currentStockSum = article.total_stock_quantity;
-      const dailyBurn = calculateDailyBurnRate(article.estimated_monthly_usage);
-      
-      // Calculate dynamic expected stock
-      const expectedStock = getExpectedStock(
-        article.article_number,
+      // Detailed stock estimation based on date of stock entered + scenario offset
+      const estimation = getDetailedStockEstimation(
+        article,
         simulatedDate,
+        scenarioDaysOffset,
         db.stockTakingLog,
-        db.stockMaster,
-        dailyBurn
+        db.stockMaster
       );
 
+      const dynamicCurrentStock = estimation.projectedStockUnits;
+      const dailyBurn = estimation.dailyBurnRate;
+
       // Evaluate suppression status
-      const suppression = evaluateSuppression(article, currentStockSum, db.purchaseOrders, simulatedDate);
+      const suppression = evaluateSuppression(article, dynamicCurrentStock, db.purchaseOrders, simulatedDate);
 
       let statusLabel: 'Healthy' | 'Low' | 'Action Needed' | 'Suppressed' = 'Healthy';
-      if (currentStockSum <= article.reorder_level) {
+      if (dynamicCurrentStock <= article.reorder_level) {
         statusLabel = suppression.isSuppressed ? 'Suppressed' : 'Action Needed';
       }
-      if (currentStockSum <= article.min_quantity && !suppression.isSuppressed) {
+      if (dynamicCurrentStock <= article.min_quantity && !suppression.isSuppressed) {
         statusLabel = 'Low';
       }
 
       return {
         ...article,
-        currentStock: currentStockSum,
-        expectedStock,
+        currentStock: dynamicCurrentStock,
+        expectedStock: estimation.projectedStockUnits,
         dailyBurn,
+        estimation,
         suppression,
         statusLabel
       };
     });
-  }, [db, simulatedDate]);
+  }, [db, simulatedDate, scenarioDaysOffset]);
 
   // KPIs
   const kpis = useMemo(() => {
@@ -1456,8 +1504,9 @@ export default function DelhiStationInventoryApp() {
     const suppressed = evaluatedArticles.filter(a => a.statusLabel === 'Suppressed').length;
     const low = evaluatedArticles.filter(a => a.statusLabel === 'Low').length;
     const healthy = evaluatedArticles.filter(a => a.statusLabel === 'Healthy').length;
+    const belowLeadTime = evaluatedArticles.filter(a => a.estimation.isBelowLeadTime).length;
 
-    return { total, actionNeeded, suppressed, low, healthy };
+    return { total, actionNeeded, suppressed, low, healthy, belowLeadTime };
   }, [evaluatedArticles]);
 
   // Unique stock locations for filtering and grouping
@@ -1490,7 +1539,8 @@ export default function DelhiStationInventoryApp() {
         (stockFilter === 'Healthy' && (article.statusLabel === 'Healthy' || article.total_stock_quantity > article.reorder_level)) ||
         (stockFilter === 'Low' && article.statusLabel === 'Low') ||
         (stockFilter === 'Action Needed' && (article.statusLabel === 'Action Needed' || article.statusLabel === 'Low')) ||
-        (stockFilter === 'Suppressed' && (article.statusLabel === 'Suppressed' || article.suppression.isSuppressed));
+        (stockFilter === 'Suppressed' && (article.statusLabel === 'Suppressed' || article.suppression.isSuppressed)) ||
+        (stockFilter === 'Below Lead Days' && article.estimation.isBelowLeadTime);
 
       const itemLoc = article.location && article.location.trim() ? article.location.trim() : 'UNALLOCATED';
       const matchesLocation = locationFilter === 'All' || itemLoc.toLowerCase() === locationFilter.toLowerCase();
@@ -1957,7 +2007,7 @@ export default function DelhiStationInventoryApp() {
           
           {/* TOP ROW: SMART SUMMARY KPI CARDS */}
           {activeTab !== 'dashboard' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 shrink-0">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
               
               {/* Card 1: Action Needed */}
               <button 
@@ -1968,7 +2018,7 @@ export default function DelhiStationInventoryApp() {
                     setActiveTab('dashboard');
                   }
                 }}
-                className={`bg-white border-b-4 border-red-500 p-4 shadow-sm flex flex-col justify-between h-28 text-left transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.01] focus:outline-none ${
+                className={`bg-white border-b-4 border-red-500 p-4 shadow-sm flex flex-col justify-between h-28 text-left transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.01] focus:outline-none rounded-xl ${
                   stockFilter === 'Action Needed' ? 'ring-2 ring-red-500 shadow-inner bg-red-50/10' : ''
                 }`}
               >
@@ -1982,7 +2032,7 @@ export default function DelhiStationInventoryApp() {
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-black text-slate-900 font-display">{kpis.actionNeeded}</span>
-                  <span className="text-xs text-slate-500">Items below reorder level</span>
+                  <span className="text-xs text-slate-500">Below reorder level</span>
                 </div>
               </button>
 
@@ -1995,7 +2045,7 @@ export default function DelhiStationInventoryApp() {
                     setActiveTab('dashboard');
                   }
                 }}
-                className={`bg-white border-b-4 border-amber-500 p-4 shadow-sm flex flex-col justify-between h-28 text-left transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.01] focus:outline-none ${
+                className={`bg-white border-b-4 border-amber-500 p-4 shadow-sm flex flex-col justify-between h-28 text-left transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.01] focus:outline-none rounded-xl ${
                   stockFilter === 'Suppressed' ? 'ring-2 ring-amber-500 shadow-inner bg-amber-50/10' : ''
                 }`}
               >
@@ -2009,7 +2059,7 @@ export default function DelhiStationInventoryApp() {
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-black text-slate-900 font-display">{kpis.suppressed}</span>
-                  <span className="text-xs text-slate-500">Active POs suppressing alerts</span>
+                  <span className="text-xs text-slate-500">POs suppressing alerts</span>
                 </div>
               </button>
 
@@ -2022,7 +2072,7 @@ export default function DelhiStationInventoryApp() {
                     setActiveTab('dashboard');
                   }
                 }}
-                className={`bg-white border-b-4 border-green-500 p-4 shadow-sm flex flex-col justify-between h-28 text-left transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.01] focus:outline-none ${
+                className={`bg-white border-b-4 border-green-500 p-4 shadow-sm flex flex-col justify-between h-28 text-left transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.01] focus:outline-none rounded-xl ${
                   stockFilter === 'Healthy' ? 'ring-2 ring-green-500 shadow-inner bg-green-50/10' : ''
                 }`}
               >
@@ -2036,7 +2086,33 @@ export default function DelhiStationInventoryApp() {
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-black text-slate-900 font-display">{kpis.healthy}</span>
-                  <span className="text-xs text-slate-500">Items optimally stocked</span>
+                  <span className="text-xs text-slate-500">Optimally stocked</span>
+                </div>
+              </button>
+
+              {/* Card 4: Below Lead Days (Flash Red) */}
+              <button 
+                onClick={() => {
+                  const targetFilter = 'Below Lead Days';
+                  setStockFilter(stockFilter === targetFilter ? 'All' : targetFilter);
+                }}
+                className={`bg-white border-b-4 border-rose-600 p-4 shadow-sm flex flex-col justify-between h-28 text-left transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.01] focus:outline-none rounded-xl ${
+                  stockFilter === 'Below Lead Days' ? 'ring-2 ring-rose-600 shadow-inner bg-rose-50/20' : ''
+                }`}
+              >
+                <div className="flex justify-between items-start w-full">
+                  <h3 className="text-xs font-bold text-rose-600 uppercase tracking-wider font-display flex items-center gap-1.5">
+                    Below Lead Days {kpis.belowLeadTime > 0 && <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping"></span>}
+                  </h3>
+                  <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                    stockFilter === 'Below Lead Days' ? 'bg-rose-600 text-white' : kpis.belowLeadTime > 0 ? 'animate-flash-red text-white' : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {stockFilter === 'Below Lead Days' ? 'FILTER ACTIVE' : kpis.belowLeadTime > 0 ? 'FLASHING RED' : 'SAFE'}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-black text-rose-700 font-display">{kpis.belowLeadTime}</span>
+                  <span className="text-xs text-slate-500">&le; Lead Days buffer</span>
                 </div>
               </button>
 
@@ -2051,6 +2127,87 @@ export default function DelhiStationInventoryApp() {
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
             
+            {/* INVENTORY ESTIMATION & SCENARIO TOOLBAR */}
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 font-display">
+                    🔮 Future Consumption Scenario Simulator
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Project stock quantities and remaining days of stock coverage based on last count dates, daily burn rates, and scenario days.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 font-mono text-xs bg-slate-50 p-1.5 rounded-xl border border-slate-200">
+                  <span className="text-slate-500 font-sans font-semibold px-2">Scenario:</span>
+                  {[0, 1, 3, 7, 15, 30].map((days) => (
+                    <button
+                      key={days}
+                      onClick={() => setScenarioDaysOffset(days)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        scenarioDaysOffset === days
+                          ? 'bg-orange-500 text-white shadow-sm'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                      }`}
+                    >
+                      {days === 0 ? 'Actual Stock' : `+${days}d`}
+                    </button>
+                  ))}
+                  <div className="w-[1px] h-4 bg-slate-300 mx-1"></div>
+                  <input
+                    type="number"
+                    min="0"
+                    max="180"
+                    placeholder="Custom Days"
+                    value={scenarioDaysOffset || ''}
+                    onChange={(e) => setScenarioDaysOffset(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-16 px-2 py-1 text-xs text-center border border-slate-200 rounded-lg bg-white font-bold text-slate-800"
+                    title="Enter custom days offset"
+                  />
+                  <span className="text-[10px] text-slate-400 font-sans font-medium pr-2">days</span>
+                </div>
+              </div>
+              
+              {/* Informative stats bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1 text-xs">
+                <div className="bg-slate-50/50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                  <span className="text-slate-400 font-medium">Projected Date:</span>
+                  <input
+                    type="date"
+                    value={(() => {
+                      const d = new Date(simulatedDate + 'T12:00:00');
+                      d.setDate(d.getDate() + scenarioDaysOffset);
+                      const yyyy = d.getFullYear();
+                      const mm = String(d.getMonth() + 1).padStart(2, '0');
+                      const dd = String(d.getDate()).padStart(2, '0');
+                      return `${yyyy}-${mm}-${dd}`;
+                    })()}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val) {
+                        setPendingProjDate(val);
+                        setIsProjDateModalOpen(true);
+                      }
+                    }}
+                    className="font-bold text-slate-800 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 mt-1 focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer w-full shadow-sm hover:border-slate-300 transition"
+                    title="Edit projected date directly (will prompt and clear values)"
+                  />
+                </div>
+                <div className="bg-slate-50/50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                  <span className="text-slate-400">Items Below Lead Time Buffer:</span>
+                  <span className={`font-bold text-sm mt-1 flex items-center gap-1.5 ${kpis.belowLeadTime > 0 ? 'text-rose-600 animate-pulse' : 'text-emerald-600'}`}>
+                    {kpis.belowLeadTime > 0 ? '🚨' : '✅'} {kpis.belowLeadTime} items
+                  </span>
+                </div>
+                <div className="bg-slate-50/50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                  <span className="text-slate-400 font-medium">Flash Alerts Rule:</span>
+                  <span className="text-slate-500 mt-1 leading-tight">
+                    Flashes <span className="text-rose-600 font-bold">RED</span> when remaining cover is <span className="font-bold">&le; Lead Days</span> buffer
+                  </span>
+                </div>
+              </div>
+            </div>
+
             {/* STICKY TOP NAVIGATION BAR FOR STRICT SECTION FILTERING */}
             <div className="sticky top-0 bg-[#EDF2F7] py-3 z-30 shadow-xs border-b border-slate-200/50 -mx-6 px-6 shrink-0 mb-4">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -2094,6 +2251,20 @@ export default function DelhiStationInventoryApp() {
                     <span>🟢 Healthy Stock</span>
                     <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-black font-mono ${stockFilter === 'Healthy' ? 'bg-emerald-800 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
                       {kpis.healthy}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setStockFilter('Below Lead Days')}
+                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-xs font-bold transition-all shadow-sm cursor-pointer ${
+                      stockFilter === 'Below Lead Days'
+                        ? 'bg-rose-700 border-rose-800 text-white shadow-inner scale-[0.98]'
+                        : 'bg-white hover:bg-rose-50 border-rose-200 text-rose-700'
+                    }`}
+                  >
+                    <span>🚨 Below Lead Days</span>
+                    <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-black font-mono ${stockFilter === 'Below Lead Days' ? 'bg-rose-900 text-white' : 'bg-rose-100 text-rose-700'}`}>
+                      {kpis.belowLeadTime}
                     </span>
                   </button>
 
@@ -2224,11 +2395,21 @@ export default function DelhiStationInventoryApp() {
                             </span>
                           </div>
                           
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 py-2 text-xs">
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 py-2 text-xs">
                             <div>
                               <div className="text-slate-400">Current Stock</div>
                               <div className="font-bold text-red-600 font-mono">
                                 {(article.currentStock ?? 0).toLocaleString()} {article.smallest_unit_name}s
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-slate-400">Est. Days Left</div>
+                              <div className={`font-black font-mono px-1.5 py-0.5 rounded text-center inline-block ${
+                                article.estimation.isBelowLeadTime 
+                                  ? 'bg-rose-600 text-white animate-flash-red' 
+                                  : 'text-slate-700 font-bold'
+                              }`}>
+                                {article.estimation.daysStockLeft === 999 ? '∞' : `${article.estimation.daysStockLeft} days`}
                               </div>
                             </div>
                             <div>
@@ -2459,6 +2640,97 @@ export default function DelhiStationInventoryApp() {
                 </div>
               </div>
             )}
+
+              {/* 4. BELOW LEAD DAYS BUFFER PANEL */}
+              {(stockFilter === 'All' || stockFilter === 'Below Lead Days') && (
+                <div className="bg-white border border-rose-200 rounded-2xl shadow-sm overflow-hidden">
+                  <div className="bg-rose-50 px-5 py-4 border-b border-rose-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-rose-800">
+                      <AlertTriangle className="w-5 h-5 text-rose-500 animate-pulse" />
+                      <h3 className="font-bold text-sm uppercase tracking-wider font-display">🚨 Below Lead Days: Critical Delivery Buffer Risk</h3>
+                    </div>
+                    <span className="bg-rose-100 text-rose-800 text-xs px-2 py-0.5 rounded-md font-bold animate-pulse">
+                      Estimated Days Left &le; Lead Days
+                    </span>
+                  </div>
+                  
+                  <div className="divide-y divide-slate-100">
+                    {filteredArticles.filter(a => a.estimation.isBelowLeadTime).length === 0 ? (
+                      <div className="p-8 text-center text-slate-400 bg-rose-50/5">
+                        <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-2" />
+                        <p className="text-sm">Excellent! No stock items are currently running below their Lead Days buffer time.</p>
+                      </div>
+                    ) : (
+                      filteredArticles.filter(a => a.estimation.isBelowLeadTime).map((article, index) => (
+                        <div key={`${article.article_number}-${index}`} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-6 hover:bg-slate-50 transition">
+                          <div className="space-y-2 max-w-xl">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono font-bold bg-rose-600 text-white px-2 py-0.5 rounded animate-flash-red">
+                                {article.article_number}
+                              </span>
+                              <span className="font-bold text-slate-800 text-left">
+                                {article.description}
+                              </span>
+                              <span className="bg-red-100 text-red-800 text-[10px] font-bold px-2 py-0.5 rounded-full font-mono">
+                                {article.estimation.daysStockLeft} Days Left
+                              </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 py-2 text-xs">
+                              <div>
+                                <div className="text-slate-400">Current Stock</div>
+                                <div className="font-bold text-red-600 font-mono">
+                                  {(article.currentStock ?? 0).toLocaleString()} {article.smallest_unit_name}s
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400">Supplier Lead Time</div>
+                                <div className="font-bold text-red-700 font-mono">
+                                  {article.lead_time_days} Days
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400">Daily Burn Rate</div>
+                                <div className="font-bold text-slate-700 font-mono">
+                                  {article.dailyBurn.toFixed(1)} / day
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400 font-mono text-[10px]">Min / Reorder</div>
+                                <div className="font-bold text-slate-700 font-mono">
+                                  {article.min_quantity} / {article.reorder_level}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="text-rose-700 bg-rose-50 border border-rose-100 p-2.5 rounded-lg text-xs flex items-center gap-2">
+                              <span>⚠️</span>
+                              <span>
+                                <strong>Lead Time Risk Alert</strong>: This item has {article.estimation.daysStockLeft} days of stock remaining, which is less than or equal to the {article.lead_time_days} days required for delivery.
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Quick action button */}
+                          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col md:flex-row items-start md:items-center gap-4 shrink-0">
+                            <div>
+                              <div className="text-[10px] uppercase font-bold text-slate-400">Reorder Volume</div>
+                              <div className="text-sm font-mono font-bold text-slate-700">{(article.order_volume ?? 0).toLocaleString()} units</div>
+                              <div className="text-[10px] text-slate-500">Route: {article.ordering_channel}</div>
+                            </div>
+                            <button
+                              onClick={() => handleQuickOrder(article)}
+                              className="w-full md:w-auto bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-4 py-2.5 rounded-lg shadow-sm hover:shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <Truck className="w-3.5 h-3.5" /> Fast Order Now
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* 3. HEALTHY STOCK PANEL */}
               {(stockFilter === 'All' || stockFilter === 'Healthy') && (
@@ -2971,29 +3243,45 @@ export default function DelhiStationInventoryApp() {
                     }`}
                     title="Standard Data Grid Table View"
                   >
-                    <List className="w-3.5 h-3.5" /> Table
+                    <List className="w-3.5 h-3.5 text-slate-500" /> Table
                   </button>
+
                   <button
-                    onClick={() => setStockViewMode('gridEdit')}
+                    onClick={() => setStockViewMode('spreadsheetView')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
-                      stockViewMode === 'gridEdit'
-                        ? 'bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-500'
-                        : 'text-slate-600 hover:text-emerald-700 hover:bg-emerald-50/50'
+                      stockViewMode === 'spreadsheetView'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-500 hover:text-indigo-700 hover:bg-indigo-50/50'
                     }`}
-                    title="Excel-like Quick Grid Edit Mode (Inline spreadsheet updates for multiple items)"
+                    title="Read-Only Spreadsheet View"
                   >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" /> Excel Quick Edit
+                    <TableProperties className={`w-3.5 h-3.5 ${stockViewMode === 'spreadsheetView' ? 'text-white' : 'text-indigo-500'}`} /> Spreadsheet View
                   </button>
+
+                  {currentUser?.role === 'admin' && (
+                    <button
+                      onClick={() => setStockViewMode('gridEdit')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                        stockViewMode === 'gridEdit'
+                          ? 'bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-500'
+                          : 'text-slate-600 hover:text-emerald-700 hover:bg-emerald-50/50'
+                      }`}
+                      title="Excel-like Quick Grid Edit Mode (Inline spreadsheet updates for multiple items)"
+                    >
+                      <FileSpreadsheet className={`w-3.5 h-3.5 ${stockViewMode === 'gridEdit' ? 'text-white' : 'text-emerald-500'}`} /> Excel Quick Edit
+                    </button>
+                  )}
+
                   <button
                     onClick={() => setStockViewMode('grouped')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
                       stockViewMode === 'grouped'
-                        ? 'bg-indigo-600 text-white shadow-xs'
+                        ? 'bg-slate-800 text-white shadow-xs'
                         : 'text-slate-500 hover:text-slate-800'
                     }`}
                     title="Group Stock by Location"
                   >
-                    <MapPin className="w-3.5 h-3.5" /> Group by Location
+                    <MapPin className="w-3.5 h-3.5 text-slate-500" /> Group by Location
                   </button>
                 </div>
               </div>
@@ -3073,7 +3361,7 @@ export default function DelhiStationInventoryApp() {
              )}
 
             {/* Render View: Excel Grid Edit vs Grouped by Location vs Standard Table */}
-            {stockViewMode === 'gridEdit' ? (
+            {stockViewMode === 'gridEdit' || stockViewMode === 'spreadsheetView' ? (
               <ExcelStockGrid
                 filteredArticles={filteredArticles}
                 selectedArticleNumbers={selectedArticleNumbers}
@@ -3097,6 +3385,7 @@ export default function DelhiStationInventoryApp() {
                 handleDiscardAllGridEdits={handleDiscardAllGridEdits}
                 handleBulkApplyLocation={handleBulkApplyLocation}
                 onExitGridMode={() => setStockViewMode('table')}
+                viewOnly={stockViewMode === 'spreadsheetView'}
               />
             ) : stockViewMode === 'grouped' ? (
               <div className="space-y-6">
@@ -3170,6 +3459,7 @@ export default function DelhiStationInventoryApp() {
                                   <th className="p-4">Barcode</th>
                                   <th className="p-4">Packaging Hierarchy</th>
                                    <th className="p-4">Quantity Details</th>
+                                  <th className="p-4">Est. Days Left</th>
                                    <th className="p-4">Add Info</th>
                                    <th className="p-4">Consumption</th>
                                   <th className="p-4">Threshold Limits</th>
@@ -3227,10 +3517,24 @@ export default function DelhiStationInventoryApp() {
                                           <span className="font-bold text-slate-800 text-sm block">
                                             {article.description}
                                           </span>
-                                          <div className="text-[11px] text-slate-500">
-                                            Current Stock: <strong className="font-mono text-slate-700">
-                                              {(article.currentStock ?? 0).toLocaleString()} {article.smallest_unit_name}s
-                                            </strong>
+                                          <div className="text-[11px] text-slate-500 space-y-0.5">
+                                            <div>
+                                              Current Stock: <strong className="font-mono text-slate-700">
+                                                {(article.currentStock ?? 0).toLocaleString()} {article.smallest_unit_name}s
+                                              </strong>
+                                            </div>
+                                            <div className="text-[11px] text-slate-500 flex items-center gap-1 flex-wrap mt-0.5">
+                                              <span>Est. Coverage:</span>
+                                              {article.estimation.isBelowLeadTime ? (
+                                                <span className="animate-flash-red text-[10px] font-black px-1.5 py-0.5 rounded text-white font-mono flex items-center gap-0.5">
+                                                  🚨 {article.estimation.daysStockLeft} Days (&le; {article.lead_time_days}d Lead)
+                                                </span>
+                                              ) : (
+                                                <strong className="font-mono text-slate-700 font-bold">
+                                                  {article.estimation.daysStockLeft === 999 ? '∞' : `${article.estimation.daysStockLeft} Days`}
+                                                </strong>
+                                              )}
+                                            </div>
                                           </div>
                                         </div>
                                       </div>
@@ -3252,6 +3556,22 @@ export default function DelhiStationInventoryApp() {
                                     </td>
                                     <td className="p-4">
                                       <div className="font-mono text-slate-700">{article.quantity_details || <span className="text-slate-300 italic">N/A</span>}</div>
+                                    </td>
+                                    <td className="p-4">
+                                      {article.estimation.isBelowLeadTime ? (
+                                        <span className="animate-flash-red text-[10px] font-black px-1.5 py-0.5 rounded text-white font-mono flex items-center gap-0.5 w-fit">
+                                          🚨 {article.estimation.daysStockLeft} Days
+                                        </span>
+                                      ) : (
+                                        <span className="font-mono text-slate-700 font-bold bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                                          {article.estimation.daysStockLeft === 999 ? '∞' : `${article.estimation.daysStockLeft} Days`}
+                                        </span>
+                                      )}
+                                      {article.estimation.isBelowLeadTime && (
+                                        <div className="text-[9px] text-red-500 font-medium mt-0.5">
+                                          &le; {article.lead_time_days}d lead
+                                        </div>
+                                      )}
                                     </td>
                                     <td className="p-4">
                                       <div className="text-slate-700">{article.add_info || <span className="text-slate-300 italic">N/A</span>}</div>
@@ -3344,6 +3664,7 @@ export default function DelhiStationInventoryApp() {
                         <th className="p-4">Barcode</th>
                         <th className="p-4">Packaging Hierarchy</th>
                         <th className="p-4">Quantity Details</th>
+                        <th className="p-4">Est. Days Left</th>
                         <th className="p-4">Remarks / Add Info</th>
                         <th className="p-4">Consumption</th>
                         <th className="p-4">Threshold Limits</th>
@@ -3354,7 +3675,7 @@ export default function DelhiStationInventoryApp() {
                     <tbody className="divide-y divide-slate-100 text-xs">
                       {filteredArticles.length === 0 ? (
                         <tr>
-                          <td colSpan={10} className="p-8 text-center text-slate-400">
+                          <td colSpan={11} className="p-8 text-center text-slate-400">
                             No matching stock articles found.
                           </td>
                         </tr>
@@ -3412,10 +3733,24 @@ export default function DelhiStationInventoryApp() {
                                 <span className="font-bold text-slate-800 text-sm block">
                                   {article.description}
                                 </span>
-                                  <div className="text-[11px] text-slate-500">
-                                    Current Stock: <strong className="font-mono text-slate-700">
-                                      {(article.currentStock ?? 0).toLocaleString()} {article.smallest_unit_name}s
-                                    </strong>
+                                  <div className="text-[11px] text-slate-500 space-y-0.5">
+                                    <div>
+                                      Current Stock: <strong className="font-mono text-slate-700">
+                                        {(article.currentStock ?? 0).toLocaleString()} {article.smallest_unit_name}s
+                                      </strong>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 flex items-center gap-1 flex-wrap mt-0.5">
+                                      <span>Est. Coverage:</span>
+                                      {article.estimation.isBelowLeadTime ? (
+                                        <span className="animate-flash-red text-[10px] font-black px-1.5 py-0.5 rounded text-white font-mono flex items-center gap-0.5">
+                                          🚨 {article.estimation.daysStockLeft} Days (&le; {article.lead_time_days}d Lead)
+                                        </span>
+                                      ) : (
+                                        <strong className="font-mono text-slate-700 font-bold">
+                                          {article.estimation.daysStockLeft === 999 ? '∞' : `${article.estimation.daysStockLeft} Days`}
+                                        </strong>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
                               </div>
@@ -3437,6 +3772,22 @@ export default function DelhiStationInventoryApp() {
                             </td>
                             <td className="p-4">
                               <div className="font-mono text-slate-700">{article.quantity_details || <span className="text-slate-300 italic">N/A</span>}</div>
+                            </td>
+                            <td className="p-4">
+                              {article.estimation.isBelowLeadTime ? (
+                                <span className="animate-flash-red text-[10px] font-black px-1.5 py-0.5 rounded text-white font-mono flex items-center gap-0.5 w-fit">
+                                  🚨 {article.estimation.daysStockLeft} Days
+                                </span>
+                              ) : (
+                                <span className="font-mono text-slate-700 font-bold bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                                  {article.estimation.daysStockLeft === 999 ? '∞' : `${article.estimation.daysStockLeft} Days`}
+                                </span>
+                              )}
+                              {article.estimation.isBelowLeadTime && (
+                                <div className="text-[9px] text-red-500 font-medium mt-0.5">
+                                  &le; {article.lead_time_days}d lead
+                                </div>
+                              )}
                             </td>
                             <td className="p-4">
                               <div className="text-slate-700">{article.add_info || <span className="text-slate-300 italic">N/A</span>}</div>
@@ -4987,6 +5338,11 @@ export default function DelhiStationInventoryApp() {
                   size: A4 portrait;
                   margin: 8mm;
                 }
+                /* Hide main application and all other screen interfaces */
+                #delhi-station-app {
+                  display: none !important;
+                }
+                
                 html, body {
                   background: #ffffff !important;
                   margin: 0 !important;
@@ -4995,32 +5351,57 @@ export default function DelhiStationInventoryApp() {
                   min-height: 0 !important;
                   overflow: visible !important;
                 }
-                body * {
-                  visibility: hidden !important;
+                
+                /* Reset modal containers for seamless multipage document flow */
+                #barcode-modal-backdrop {
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  width: 100% !important;
+                  height: auto !important;
+                  min-height: 0 !important;
+                  overflow: visible !important;
+                  background: #ffffff !important;
+                  padding: 0 !important;
+                  margin: 0 !important;
+                  z-index: auto !important;
+                  display: block !important;
+                  box-shadow: none !important;
+                  backdrop-filter: none !important;
                 }
-                #printable-barcode-sheet, 
-                #printable-barcode-sheet * {
+                
+                #barcode-modal-backdrop * {
                   visibility: visible !important;
                   -webkit-print-color-adjust: exact !important;
                   print-color-adjust: exact !important;
                   color-adjust: exact !important;
                 }
-                #barcode-modal-backdrop,
-                #barcode-modal-container,
-                #barcode-modal-scroll-body {
+
+                #barcode-modal-container {
                   position: static !important;
                   display: block !important;
-                  overflow: visible !important;
-                  max-height: none !important;
-                  height: auto !important;
                   width: 100% !important;
-                  margin: 0 !important;
-                  padding: 0 !important;
+                  height: auto !important;
+                  max-height: none !important;
                   border: none !important;
                   box-shadow: none !important;
                   background: #ffffff !important;
-                  backdrop-filter: none !important;
+                  padding: 0 !important;
+                  margin: 0 !important;
                 }
+
+                #barcode-modal-scroll-body {
+                  position: static !important;
+                  display: block !important;
+                  width: 100% !important;
+                  height: auto !important;
+                  max-height: none !important;
+                  overflow: visible !important;
+                  background: #ffffff !important;
+                  padding: 0 !important;
+                  margin: 0 !important;
+                }
+
                 #printable-barcode-sheet {
                   position: static !important;
                   display: grid !important;
@@ -5032,6 +5413,7 @@ export default function DelhiStationInventoryApp() {
                   background: #ffffff !important;
                   overflow: visible !important;
                 }
+                
                 #printable-barcode-sheet > div {
                   position: relative !important;
                   break-inside: avoid !important;
@@ -5041,15 +5423,20 @@ export default function DelhiStationInventoryApp() {
                   overflow: visible !important;
                   min-height: 190px !important;
                 }
-                #printable-barcode-sheet svg,
+
+                /* Ensure all SVGs and path definitions render perfectly on page-breaks */
+                #printable-barcode-sheet svg {
+                  display: block !important;
+                  visibility: visible !important;
+                  opacity: 1 !important;
+                  max-width: 100% !important;
+                  height: auto !important;
+                }
+                
                 #printable-barcode-sheet svg * {
                   display: block !important;
                   visibility: visible !important;
                   opacity: 1 !important;
-                }
-                #printable-barcode-sheet svg {
-                  max-width: 100% !important;
-                  height: auto !important;
                 }
               }
             `}} />
@@ -5762,6 +6149,47 @@ export default function DelhiStationInventoryApp() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Projected Date Confirmation Modal */}
+      {isProjDateModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[130] flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150 text-slate-800">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0 border border-orange-200">
+                <AlertTriangle className="w-5 h-5 text-orange-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-900 font-display">Confirm Date Shift & Clear Values</h3>
+                <p className="text-[11px] text-slate-500">Action will clear inventory state metrics</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+              Modifying the projected date to <strong className="font-semibold text-slate-900">{pendingProjDate}</strong> will permanently delete all values in <strong className="font-semibold text-slate-900">Quantity Details</strong> and <strong className="font-semibold text-slate-900">Current Stock</strong> fields for all items in the database.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProjDateModalOpen(false);
+                  setPendingProjDate('');
+                }}
+                className="px-4 py-2 rounded-lg text-slate-600 font-semibold hover:bg-slate-100 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmProjectedDate}
+                className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-4 py-2 rounded-lg shadow-sm hover:shadow transition flex items-center gap-1.5 cursor-pointer"
+              >
+                OK
+              </button>
+            </div>
           </div>
         </div>
       )}

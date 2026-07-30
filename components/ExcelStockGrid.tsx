@@ -45,6 +45,7 @@ export interface ExcelStockGridProps {
   handleDiscardAllGridEdits: () => void;
   handleBulkApplyLocation: (loc: string) => void;
   onExitGridMode?: () => void;
+  viewOnly?: boolean;
 }
 
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
@@ -55,13 +56,14 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   quantity_details: 200,
   min_order_qty: 160,
   currentStock: 145,
+  daysStockLeft: 135,
   min_quantity: 95,
   reorder_level: 105,
   max_quantity: 95,
   estimated_monthly_usage: 115,
   barcode: 130,
   ordering_channel: 130,
-  lead_time_days: 90,
+  lead_time_days: 105,
   boxes_per_pack: 90,
   units_per_box: 90,
   smallest_unit_name: 105,
@@ -69,7 +71,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   actions: 100,
 };
 
-// Quantity Details is now placed BEFORE currentStock by default
+// Quantity Details is placed BEFORE currentStock, followed by Stock Days Left
 const DEFAULT_COLUMN_ORDER: string[] = [
   'checkbox',
   'article_number',
@@ -78,6 +80,7 @@ const DEFAULT_COLUMN_ORDER: string[] = [
   'quantity_details',
   'min_order_qty',
   'currentStock',
+  'daysStockLeft',
   'min_quantity',
   'reorder_level',
   'max_quantity',
@@ -116,7 +119,8 @@ export function ExcelStockGrid({
   handleDiscardGridRow,
   handleDiscardAllGridEdits,
   handleBulkApplyLocation,
-  onExitGridMode
+  onExitGridMode,
+  viewOnly = false
 }: ExcelStockGridProps) {
   // Column Widths State with LocalStorage Persistence
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
@@ -317,6 +321,8 @@ export function ExcelStockGrid({
         return <span className="truncate">Min Order Qty</span>;
       case 'currentStock':
         return <span className="truncate">Current Stock</span>;
+      case 'daysStockLeft':
+        return <span className="truncate text-rose-600 font-extrabold">Est. Days Left</span>;
       case 'min_quantity':
         return <span className="truncate">Min Qty</span>;
       case 'reorder_level':
@@ -369,6 +375,170 @@ export function ExcelStockGrid({
     const qtySpec = rowEdit.quantity_details !== undefined ? rowEdit.quantity_details : article.quantity_details;
     const minOrderQty = rowEdit.min_order_qty !== undefined ? rowEdit.min_order_qty : article.min_order_qty;
     const addInfo = rowEdit.add_info !== undefined ? rowEdit.add_info : article.add_info;
+
+    if (viewOnly) {
+      switch (colKey) {
+        case 'checkbox':
+          return (
+            <input
+              type="checkbox"
+              checked={selectedArticleNumbers.includes(article.article_number)}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setSelectedArticleNumbers([...selectedArticleNumbers, article.article_number]);
+                } else {
+                  setSelectedArticleNumbers(selectedArticleNumbers.filter(num => num !== article.article_number));
+                }
+              }}
+              className="cursor-pointer"
+            />
+          );
+        case 'article_number':
+          return (
+            <div className="flex items-center gap-1 overflow-hidden font-mono text-xs text-slate-500 px-2 py-1">
+              <span className="truncate">{article.article_number}</span>
+            </div>
+          );
+        case 'description':
+          return (
+            <div className="px-2 py-1 font-sans text-xs font-semibold text-slate-800 truncate" title={desc || ''}>
+              {desc || <span className="text-slate-300 italic">N/A</span>}
+            </div>
+          );
+        case 'location':
+          return (
+            <div className="px-2 py-1 font-mono text-xs font-bold text-indigo-900 uppercase truncate" title={loc || ''}>
+              {loc || <span className="text-slate-300 italic">N/A</span>}
+            </div>
+          );
+        case 'quantity_details':
+          return (
+            <div className="px-2 py-1 font-sans text-xs text-slate-700 truncate" title={qtySpec || ''}>
+              {qtySpec || <span className="text-slate-300 italic">N/A</span>}
+            </div>
+          );
+        case 'min_order_qty':
+          return (
+            <div className="px-2 py-1 font-sans text-xs text-slate-700 truncate" title={minOrderQty || ''}>
+              {minOrderQty || <span className="text-slate-300 italic">N/A</span>}
+            </div>
+          );
+        case 'currentStock':
+          return (
+            <div className="flex items-center gap-1 px-1.5 py-1">
+              <span className="font-mono text-xs font-bold text-slate-900 text-right w-16">{stock ?? 0}</span>
+              <span className={`text-[9px] font-bold border px-1 py-0.5 rounded whitespace-nowrap shrink-0 ${statusBadge.bg}`}>
+                {statusBadge.text}
+              </span>
+            </div>
+          );
+        case 'daysStockLeft': {
+          const dailyBurn = (monthly || 0) / 30;
+          const daysCover = dailyBurn > 0 ? (stock || 0) / dailyBurn : 999;
+          const isBelowLead = dailyBurn > 0 && daysCover <= (lead || 0);
+
+          if (isBelowLead) {
+            return (
+              <div className="animate-flash-red text-[10px] font-black px-2 py-0.5 rounded text-white shadow-xs flex items-center justify-between font-mono w-full">
+                <span>🚨 {daysCover.toFixed(1)}d</span>
+                <span className="text-[9px] font-bold uppercase">&le; {lead}d Lead</span>
+              </div>
+            );
+          }
+          return (
+            <div className="font-mono text-xs font-bold text-slate-700 text-right px-1 w-full">
+              {dailyBurn > 0 ? `${daysCover.toFixed(1)} Days` : '∞ No Usage'}
+            </div>
+          );
+        }
+        case 'min_quantity':
+          return (
+            <div className="w-full px-2 py-1 font-mono text-xs text-slate-700 text-right">
+              {minQ ?? 0}
+            </div>
+          );
+        case 'reorder_level':
+          return (
+            <div className="w-full px-2 py-1 font-mono text-xs font-bold text-red-600 text-right">
+              {reorder ?? 0}
+            </div>
+          );
+        case 'max_quantity':
+          return (
+            <div className="w-full px-2 py-1 font-mono text-xs text-slate-700 text-right">
+              {maxQ ?? 0}
+            </div>
+          );
+        case 'estimated_monthly_usage':
+          return (
+            <div className="w-full px-2 py-1 font-mono text-xs text-slate-700 text-right">
+              {monthly ?? 0}
+            </div>
+          );
+        case 'barcode':
+          return (
+            <div className="px-2 py-1 font-mono text-xs text-slate-600 truncate" title={code || ''}>
+              {code || <span className="text-slate-300 italic">N/A</span>}
+            </div>
+          );
+        case 'ordering_channel':
+          return (
+            <div className="px-2 py-1 text-[11px] font-bold text-slate-800">
+              {route === 'Local' ? 'Local Purchase' : 'Central Team'}
+            </div>
+          );
+        case 'lead_time_days': {
+          const dailyBurn = (monthly || 0) / 30;
+          const daysCover = dailyBurn > 0 ? (stock || 0) / dailyBurn : 999;
+          const isBelowLead = dailyBurn > 0 && daysCover <= (lead || 0);
+
+          return (
+            <div className="flex items-center justify-between gap-1 px-2 py-1">
+              <span className={`font-mono text-xs font-bold text-right w-full ${isBelowLead ? 'text-red-600 font-black' : 'text-slate-700'}`}>
+                {lead ?? 0}
+              </span>
+              {isBelowLead && (
+                <span className="animate-flash-red text-[8px] font-black px-1 rounded text-white shrink-0 uppercase">
+                  RISK
+                </span>
+              )}
+            </div>
+          );
+        }
+        case 'boxes_per_pack':
+          return (
+            <div className="w-full px-2 py-1 font-mono text-xs text-slate-700 text-right">
+              {bpp ?? 0}
+            </div>
+          );
+        case 'units_per_box':
+          return (
+            <div className="w-full px-2 py-1 font-mono text-xs text-slate-700 text-right">
+              {upb ?? 0}
+            </div>
+          );
+        case 'smallest_unit_name':
+          return (
+            <div className="px-2 py-1 font-sans text-xs text-slate-700 truncate" title={unitName || ''}>
+              {unitName || <span className="text-slate-300 italic">N/A</span>}
+            </div>
+          );
+        case 'add_info':
+          return (
+            <div className="px-2 py-1 font-sans text-xs text-slate-700 truncate" title={addInfo || ''}>
+              {addInfo || <span className="text-slate-300 italic">N/A</span>}
+            </div>
+          );
+        case 'actions':
+          return (
+            <div className="flex justify-end items-center px-2 py-1">
+              <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider select-none bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded">View Only</span>
+            </div>
+          );
+        default:
+          return null;
+      }
+    }
 
     switch (colKey) {
       case 'checkbox':
@@ -451,6 +621,25 @@ export function ExcelStockGrid({
             </span>
           </div>
         );
+      case 'daysStockLeft': {
+        const dailyBurn = (monthly || 0) / 30;
+        const daysCover = dailyBurn > 0 ? (stock || 0) / dailyBurn : 999;
+        const isBelowLead = dailyBurn > 0 && daysCover <= (lead || 0);
+
+        if (isBelowLead) {
+          return (
+            <div className="animate-flash-red text-[10px] font-black px-2 py-0.5 rounded text-white shadow-xs flex items-center justify-between font-mono">
+              <span>🚨 {daysCover.toFixed(1)}d</span>
+              <span className="text-[9px] font-bold uppercase">&le; {lead}d Lead</span>
+            </div>
+          );
+        }
+        return (
+          <div className="font-mono text-xs font-bold text-slate-700 text-right px-1">
+            {dailyBurn > 0 ? `${daysCover.toFixed(1)} Days` : '∞ No Usage'}
+          </div>
+        );
+      }
       case 'min_quantity':
         return (
           <input
@@ -514,16 +703,30 @@ export function ExcelStockGrid({
             <option value="Local">Local Purchase</option>
           </select>
         );
-      case 'lead_time_days':
+      case 'lead_time_days': {
+        const dailyBurn = (monthly || 0) / 30;
+        const daysCover = dailyBurn > 0 ? (stock || 0) / dailyBurn : 999;
+        const isBelowLead = dailyBurn > 0 && daysCover <= (lead || 0);
+
         return (
-          <input
-            type="number"
-            value={lead ?? 0}
-            onChange={(e) => handleGridCellChange(article.article_number, 'lead_time_days', e.target.value)}
-            onBlur={() => gridAutoSave && handleSaveGridRow(article)}
-            className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-mono text-xs text-slate-700 outline-none text-right transition"
-          />
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              value={lead ?? 0}
+              onChange={(e) => handleGridCellChange(article.article_number, 'lead_time_days', e.target.value)}
+              onBlur={() => gridAutoSave && handleSaveGridRow(article)}
+              className={`w-full bg-transparent hover:bg-white focus:bg-white border hover:border-slate-300 focus:border-emerald-500 rounded px-2 py-1 font-mono text-xs font-bold outline-none text-right transition ${
+                isBelowLead ? 'border-red-500 text-red-600 font-black' : 'border-transparent text-slate-700'
+              }`}
+            />
+            {isBelowLead && (
+              <span className="animate-flash-red text-[8px] font-black px-1 rounded text-white shrink-0 uppercase">
+                RISK
+              </span>
+            )}
+          </div>
         );
+      }
       case 'boxes_per_pack':
         return (
           <input
@@ -598,16 +801,16 @@ export function ExcelStockGrid({
   return (
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col my-4">
       {/* Grid Header Toolbar */}
-      <div className="p-4 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-4 border-b border-slate-800">
+      <div className={`p-4 ${viewOnly ? 'bg-indigo-950 border-b border-indigo-900' : 'bg-slate-900 border-b border-slate-800'} text-white flex flex-wrap items-center justify-between gap-4`}>
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+          <div className={`p-2 ${viewOnly ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'} rounded-xl border`}>
             <TableProperties className="w-5 h-5" />
           </div>
           <div>
             <h3 className="font-bold text-sm tracking-wide flex items-center gap-2">
-              Excel Quick Grid Edit
-              <span className="bg-emerald-500 text-slate-950 font-mono text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
-                Live Inline Sync
+              {viewOnly ? 'Excel Spreadsheet Viewer' : 'Excel Quick Grid Edit'}
+              <span className={`${viewOnly ? 'bg-indigo-500 text-white' : 'bg-emerald-500 text-slate-950'} font-mono text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase`}>
+                {viewOnly ? 'Read Only' : 'Live Inline Sync'}
               </span>
             </h3>
             <p className="text-xs text-slate-300">
@@ -642,32 +845,34 @@ export function ExcelStockGrid({
           </button>
 
           {/* Unsaved Edits Badge */}
-          {Object.keys(gridEdits).length > 0 && (
+          {!viewOnly && Object.keys(gridEdits).length > 0 && (
             <div className="bg-amber-500/20 border border-amber-500/40 text-amber-300 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-2 animate-pulse">
               <span>{Object.keys(gridEdits).length} Unsaved Row(s)</span>
             </div>
           )}
 
           {/* Batch Save Button */}
-          <button
-            onClick={handleSaveAllGridEdits}
-            disabled={Object.keys(gridEdits).length === 0 || isBatchSavingGrid}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs shadow-md transition cursor-pointer ${
-              Object.keys(gridEdits).length > 0
-                ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 hover:shadow-emerald-500/20'
-                : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-            }`}
-          >
-            {isBatchSavingGrid ? (
-              <Zap className="w-4 h-4 animate-spin text-slate-950" />
-            ) : (
-              <Save className="w-4 h-4 text-slate-950" />
-            )}
-            <span>{isBatchSavingGrid ? 'Saving...' : `Save All Changes (${Object.keys(gridEdits).length})`}</span>
-          </button>
+          {!viewOnly && (
+            <button
+              onClick={handleSaveAllGridEdits}
+              disabled={Object.keys(gridEdits).length === 0 || isBatchSavingGrid}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs shadow-md transition cursor-pointer ${
+                Object.keys(gridEdits).length > 0
+                  ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 hover:shadow-emerald-500/20'
+                  : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+              }`}
+            >
+              {isBatchSavingGrid ? (
+                <Zap className="w-4 h-4 animate-spin text-slate-950" />
+              ) : (
+                <Save className="w-4 h-4 text-slate-950" />
+              )}
+              <span>{isBatchSavingGrid ? 'Saving...' : `Save All Changes (${Object.keys(gridEdits).length})`}</span>
+            </button>
+          )}
 
           {/* Discard All Button */}
-          {Object.keys(gridEdits).length > 0 && (
+          {!viewOnly && Object.keys(gridEdits).length > 0 && (
             <button
               onClick={handleDiscardAllGridEdits}
               className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
@@ -678,25 +883,27 @@ export function ExcelStockGrid({
           )}
 
           {/* Auto-Save Toggle */}
-          <label className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700 text-xs text-slate-300 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={gridAutoSave}
-              onChange={(e) => setGridAutoSave(e.target.checked)}
-              className="accent-emerald-500 rounded cursor-pointer"
-            />
-            <span className="font-medium">Auto-Sync on Change/Leave</span>
-          </label>
+          {!viewOnly && (
+            <label className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700 text-xs text-slate-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={gridAutoSave}
+                onChange={(e) => setGridAutoSave(e.target.checked)}
+                className="accent-emerald-500 rounded cursor-pointer"
+              />
+              <span className="font-medium">Auto-Sync on Change/Leave</span>
+            </label>
+          )}
 
           {/* Exit Grid Mode Button */}
           {onExitGridMode && (
             <button
               onClick={onExitGridMode}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
-              title="Exit Excel Grid Mode and return to Standard View"
+              title={viewOnly ? "Exit Spreadsheet View" : "Exit Excel Grid Mode"}
             >
               <LogOut className="w-4 h-4" />
-              <span>Exit Grid Mode</span>
+              <span>{viewOnly ? 'Exit Spreadsheet View' : 'Exit Grid Mode'}</span>
             </button>
           )}
         </div>
@@ -724,70 +931,72 @@ export function ExcelStockGrid({
       )}
 
       {/* Batch Operations Bar */}
-      <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2 text-slate-600 font-semibold">
-          <span>Quick Excel Tools:</span>
-          <span className="text-slate-400 font-normal">
-            Showing {filteredArticles.length} items • Drag header <GripVertical className="w-3 h-3 inline text-slate-400" /> to reorder columns • Drag edge <MoveHorizontal className="w-3 h-3 inline text-slate-400" /> to resize
-          </span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Bulk Set Location */}
-          <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-300 shadow-2xs">
-            <MapPin className="w-3.5 h-3.5 text-indigo-500 ml-1" />
-            <input
-              type="text"
-              list="grid-locations-list"
-              placeholder="Bulk Location (e.g. WH-B2)..."
-              value={batchLocationInput}
-              onChange={(e) => setBatchLocationInput(e.target.value)}
-              className="px-2 py-1 text-xs w-44 outline-none font-mono"
-            />
-            <datalist id="grid-locations-list">
-              {uniqueLocations.map(loc => (
-                <option key={loc} value={loc} />
-              ))}
-            </datalist>
-            <button
-              onClick={() => handleBulkApplyLocation(batchLocationInput)}
-              disabled={!batchLocationInput.trim()}
-              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white rounded font-bold text-[11px] transition cursor-pointer"
-            >
-              Apply Location to {selectedArticleNumbers.length > 0 ? `${selectedArticleNumbers.length} Selected` : 'All Filtered'}
-            </button>
+      {!viewOnly && (
+        <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-slate-600 font-semibold">
+            <span>Quick Excel Tools:</span>
+            <span className="text-slate-400 font-normal">
+              Showing {filteredArticles.length} items • Drag header <GripVertical className="w-3 h-3 inline text-slate-400" /> to reorder columns • Drag edge <MoveHorizontal className="w-3 h-3 inline text-slate-400" /> to resize
+            </span>
           </div>
 
-          {/* Quick Route Toggle */}
-          <button
-            onClick={() => {
-              const targetNums = selectedArticleNumbers.length > 0 ? selectedArticleNumbers : filteredArticles.map(a => a.article_number);
-              const updatedEdits = { ...gridEdits };
-              targetNums.forEach(num => {
-                updatedEdits[num] = { ...(updatedEdits[num] || {}), ordering_channel: 'Central' };
-              });
-              setGridEdits(updatedEdits);
-            }}
-            className="px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-slate-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-          >
-            <Truck className="w-3.5 h-3.5 text-blue-600" /> Set Central Route
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Bulk Set Location */}
+            <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-300 shadow-2xs">
+              <MapPin className="w-3.5 h-3.5 text-indigo-500 ml-1" />
+              <input
+                type="text"
+                list="grid-locations-list"
+                placeholder="Bulk Location (e.g. WH-B2)..."
+                value={batchLocationInput}
+                onChange={(e) => setBatchLocationInput(e.target.value)}
+                className="px-2 py-1 text-xs w-44 outline-none font-mono"
+              />
+              <datalist id="grid-locations-list">
+                {uniqueLocations.map(loc => (
+                  <option key={loc} value={loc} />
+                ))}
+              </datalist>
+              <button
+                onClick={() => handleBulkApplyLocation(batchLocationInput)}
+                disabled={!batchLocationInput.trim()}
+                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white rounded font-bold text-[11px] transition cursor-pointer"
+              >
+                Apply Location to {selectedArticleNumbers.length > 0 ? `${selectedArticleNumbers.length} Selected` : 'All Filtered'}
+              </button>
+            </div>
 
-          <button
-            onClick={() => {
-              const targetNums = selectedArticleNumbers.length > 0 ? selectedArticleNumbers : filteredArticles.map(a => a.article_number);
-              const updatedEdits = { ...gridEdits };
-              targetNums.forEach(num => {
-                updatedEdits[num] = { ...(updatedEdits[num] || {}), ordering_channel: 'Local' };
-              });
-              setGridEdits(updatedEdits);
-            }}
-            className="px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-slate-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-          >
-            <Truck className="w-3.5 h-3.5 text-slate-600" /> Set Local Route
-          </button>
+            {/* Quick Route Toggle */}
+            <button
+              onClick={() => {
+                const targetNums = selectedArticleNumbers.length > 0 ? selectedArticleNumbers : filteredArticles.map(a => a.article_number);
+                const updatedEdits = { ...gridEdits };
+                targetNums.forEach(num => {
+                  updatedEdits[num] = { ...(updatedEdits[num] || {}), ordering_channel: 'Central' };
+                });
+                setGridEdits(updatedEdits);
+              }}
+              className="px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-slate-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+            >
+              <Truck className="w-3.5 h-3.5 text-blue-600" /> Set Central Route
+            </button>
+
+            <button
+              onClick={() => {
+                const targetNums = selectedArticleNumbers.length > 0 ? selectedArticleNumbers : filteredArticles.map(a => a.article_number);
+                const updatedEdits = { ...gridEdits };
+                targetNums.forEach(num => {
+                  updatedEdits[num] = { ...(updatedEdits[num] || {}), ordering_channel: 'Local' };
+                });
+                setGridEdits(updatedEdits);
+              }}
+              className="px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg text-slate-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+            >
+              <Truck className="w-3.5 h-3.5 text-slate-600" /> Set Local Route
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* High Density Editable Excel Grid with Resizable Columns & Drag-Drop Reordering */}
       <div className="overflow-x-auto max-h-[70vh] relative select-none">
