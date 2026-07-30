@@ -4951,8 +4951,8 @@ export default function DelhiStationInventoryApp() {
           BARCODE TAGS GENERATOR DIALOG
           ---------------------------------------------------- */}
       {isBarcodeTagsModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-slate-100 rounded-2xl max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+        <div id="barcode-modal-backdrop" className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div id="barcode-modal-container" className="bg-slate-100 rounded-2xl max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
             {/* Modal Header */}
             <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shrink-0">
               <div className="flex items-center gap-2">
@@ -4984,14 +4984,15 @@ export default function DelhiStationInventoryApp() {
             <style dangerouslySetInnerHTML={{ __html: `
               @media print {
                 @page {
-                  size: auto;
+                  size: A4 portrait;
                   margin: 8mm;
                 }
                 html, body {
-                  background: white !important;
+                  background: #ffffff !important;
                   margin: 0 !important;
                   padding: 0 !important;
                   height: auto !important;
+                  min-height: 0 !important;
                   overflow: visible !important;
                 }
                 body * {
@@ -5004,30 +5005,51 @@ export default function DelhiStationInventoryApp() {
                   print-color-adjust: exact !important;
                   color-adjust: exact !important;
                 }
-                #printable-barcode-sheet {
-                  position: absolute !important;
-                  left: 0 !important;
-                  top: 0 !important;
+                #barcode-modal-backdrop,
+                #barcode-modal-container,
+                #barcode-modal-scroll-body {
+                  position: static !important;
+                  display: block !important;
+                  overflow: visible !important;
+                  max-height: none !important;
+                  height: auto !important;
                   width: 100% !important;
-                  background: white !important;
-                  padding: 0 !important;
                   margin: 0 !important;
+                  padding: 0 !important;
+                  border: none !important;
+                  box-shadow: none !important;
+                  background: #ffffff !important;
+                  backdrop-filter: none !important;
+                }
+                #printable-barcode-sheet {
+                  position: static !important;
                   display: grid !important;
                   grid-template-cols: repeat(2, minmax(0, 1fr)) !important;
-                  gap: 1rem !important;
+                  gap: 8mm !important;
+                  width: 100% !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  background: #ffffff !important;
                   overflow: visible !important;
                 }
                 #printable-barcode-sheet > div {
+                  position: relative !important;
                   break-inside: avoid !important;
                   page-break-inside: avoid !important;
-                  overflow: visible !important;
                   border: 2px solid #cbd5e1 !important;
                   background-color: #ffffff !important;
+                  overflow: visible !important;
+                  min-height: 190px !important;
                 }
-                #printable-barcode-sheet svg {
+                #printable-barcode-sheet svg,
+                #printable-barcode-sheet svg * {
                   display: block !important;
                   visibility: visible !important;
+                  opacity: 1 !important;
+                }
+                #printable-barcode-sheet svg {
                   max-width: 100% !important;
+                  height: auto !important;
                 }
               }
             `}} />
@@ -5052,7 +5074,7 @@ export default function DelhiStationInventoryApp() {
             </div>
 
             {/* Modal Body / Tag Sheet */}
-            <div className="p-6 overflow-y-auto bg-slate-50 flex-grow">
+            <div id="barcode-modal-scroll-body" className="p-6 overflow-y-auto bg-slate-50 flex-grow">
               <div 
                 id="printable-barcode-sheet" 
                 className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-5"
@@ -5124,7 +5146,7 @@ export default function DelhiStationInventoryApp() {
                             level="M"
                             bgColor="#ffffff"
                             fgColor="#000000"
-                            className="border border-slate-200 p-1 bg-white"
+                            className="border border-slate-200 p-1 bg-white shrink-0"
                           />
                           <div className="text-center font-mono text-[9px] text-slate-500 font-bold tracking-widest mt-1">
                             {item.article_number}
