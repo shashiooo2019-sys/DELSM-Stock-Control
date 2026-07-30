@@ -261,6 +261,7 @@ export default function DelhiStationInventoryApp() {
     lead_time_days: 5,
     location: '',
     quantity_details: '',
+    min_order_qty: '',
     add_info: ''
   });
 
@@ -908,6 +909,7 @@ export default function DelhiStationInventoryApp() {
         { key: 'barcode', regex: /barcode|upc|ean|gtin/i },
         { key: 'total_stock_quantity', regex: /total\s*stock\s*quantity|total\s*stock|stock\s*qty|actual\s*stock|current\s*stock|qty\s*count|stock\s*count/i },
         { key: 'quantity_details', regex: /quantity\s*text|quantity\s*details|qty\s*text|qty\s*details|pkg\s*details|packaging\s*details|quantity|qty/i },
+        { key: 'min_order_qty', regex: /min\s*order\s*qty|minimum\s*order|min\s*order|min\s*po|moq/i },
         { key: 'add_info', regex: /add\s*info|additional\s*info|notes|remarks|remark|free\s*text|comment|comments/i },
         { key: 'smallest_unit_name', regex: /unit\s*name|smallest\s*unit|unit|uom/i },
         { key: 'units_per_box', regex: /units\s*per\s*box|units\/box|unit\s*per\s*box|qty\s*per\s*box/i },
@@ -4647,6 +4649,7 @@ export default function DelhiStationInventoryApp() {
                         { key: 'barcode', label: 'Barcode / EAN', required: false, desc: 'Optional UPC/EAN barcode.' },
                         { key: 'total_stock_quantity', label: 'Total Stock Quantity (Numeric Count)', required: false, desc: 'Numeric quantity on hand in smallest units.' },
                         { key: 'quantity_details', label: 'Quantity Text (Free Text)', required: false, desc: 'Text description for quantity e.g. "Box of 10", "100 sheets", "50kg bag".' },
+                        { key: 'min_order_qty', label: 'Min Order Qty (Free Text)', required: false, desc: 'Free text description for minimum order quantity e.g. "50 boxes", "1 pack".' },
                         { key: 'add_info', label: 'Remarks / Notes (Free Text)', required: false, desc: 'Free text remarks, notes, or special handling instructions.' },
                         { key: 'smallest_unit_name', label: 'Smallest Unit Name', required: false, desc: 'E.g., Piece, Ampoule, Vial, Bottle (default: Piece).' },
                         { key: 'units_per_box', label: 'Units per Box', required: false, desc: 'How many smallest units fit in a Box (default: 1).' },
@@ -4843,6 +4846,7 @@ export default function DelhiStationInventoryApp() {
                             mappedItem.lead_time_days = item[columnMapping.lead_time_days] !== undefined && item[columnMapping.lead_time_days] !== '' ? Number(item[columnMapping.lead_time_days]) : 5;
                             mappedItem.location = String(item[columnMapping.location] ?? '').trim();
                             mappedItem.quantity_details = String(item[columnMapping.quantity_details] ?? '').trim();
+                            mappedItem.min_order_qty = String(item[columnMapping.min_order_qty] ?? '').trim();
                             mappedItem.add_info = String(item[columnMapping.add_info] ?? '').trim();
                             return mappedItem;
                           });

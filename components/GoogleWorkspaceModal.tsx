@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   signInWithGoogleWorkspace, 
   signOutGoogleWorkspace, 
@@ -50,7 +50,7 @@ export default function GoogleWorkspaceModal({
   // Destructive confirmation modal state
   const [confirmDeleteFile, setConfirmDeleteFile] = useState<DriveFile | null>(null);
 
-  const fetchDriveFiles = async (accessToken: string) => {
+  const fetchDriveFiles = useCallback(async (accessToken: string) => {
     try {
       const mime = fileTypeFilter === 'sheets' 
         ? 'application/vnd.google-apps.spreadsheet'
@@ -64,7 +64,7 @@ export default function GoogleWorkspaceModal({
     } catch (err: any) {
       console.error('Failed to load drive files:', err);
     }
-  };
+  }, [fileTypeFilter, driveSearch]);
 
   useEffect(() => {
     if (isOpen) {
@@ -76,7 +76,7 @@ export default function GoogleWorkspaceModal({
         }, 0);
       }
     }
-  }, [isOpen]);
+  }, [isOpen, fetchDriveFiles]);
 
   if (!isOpen) return null;
 

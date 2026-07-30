@@ -95,7 +95,7 @@ export default function EditArticleModal({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-slate-500 font-semibold mb-1">Quantity Details (Short Text)</label>
               <input
@@ -103,6 +103,16 @@ export default function EditArticleModal({
                 value={articleForm.quantity_details || ''}
                 onChange={(e) => setArticleForm({ ...articleForm, quantity_details: e.target.value })}
                 placeholder="e.g. Bulk pack / Box of 10"
+                className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-500 font-semibold mb-1">Min Order Qty (Free Text)</label>
+              <input
+                type="text"
+                value={articleForm.min_order_qty || ''}
+                onChange={(e) => setArticleForm({ ...articleForm, min_order_qty: e.target.value })}
+                placeholder="e.g. 50 boxes, 1 pack"
                 className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50"
               />
             </div>

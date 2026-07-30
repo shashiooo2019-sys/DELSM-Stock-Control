@@ -103,6 +103,7 @@ export interface StockMaster {
   lead_time_days: number;
   location?: string;
   quantity_details?: string;
+  min_order_qty?: string;
   add_info?: string;
 }
 
@@ -305,6 +306,7 @@ export function loadDatabase() {
     max_quantity: item.max_quantity ?? 0,
     estimated_monthly_usage: item.estimated_monthly_usage ?? 0,
     quantity_details: item.quantity_details ?? '',
+    min_order_qty: item.min_order_qty ?? '',
     add_info: item.add_info ?? '',
     ordering_channel: (item.ordering_channel as string) === 'Imported - Germany/Switzerland' ? 'Central Ordering Team' : item.ordering_channel
   }));
@@ -372,6 +374,7 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
     const cleanItem = sanitizeForFirestore({
       ...item,
       quantity_details: item.quantity_details ?? '',
+      min_order_qty: item.min_order_qty ?? '',
       add_info: item.add_info ?? ''
     });
     const docRef = doc(firestoreDb, 'stockMaster', item.article_number);
@@ -475,6 +478,7 @@ export async function seedInitialFirestoreData() {
       const cleanItem = sanitizeForFirestore({
         ...item,
         quantity_details: item.quantity_details ?? '',
+        min_order_qty: item.min_order_qty ?? '',
         add_info: item.add_info ?? ''
       });
       batch.set(ref, cleanItem);
