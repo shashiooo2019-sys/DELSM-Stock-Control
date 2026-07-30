@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'; /* TEST */
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { QRCodeCanvas } from 'qrcode.react';
+import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import PublicSearch from '@/components/PublicSearch';
 import GoogleWorkspaceModal from '@/components/GoogleWorkspaceModal';
 import EditArticleModal from '@/components/EditArticleModal';
@@ -4983,11 +4983,26 @@ export default function DelhiStationInventoryApp() {
             {/* Print-specific style tag */}
             <style dangerouslySetInnerHTML={{ __html: `
               @media print {
+                @page {
+                  size: auto;
+                  margin: 8mm;
+                }
+                html, body {
+                  background: white !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  height: auto !important;
+                  overflow: visible !important;
+                }
                 body * {
                   visibility: hidden !important;
                 }
-                #printable-barcode-sheet, #printable-barcode-sheet * {
+                #printable-barcode-sheet, 
+                #printable-barcode-sheet * {
                   visibility: visible !important;
+                  -webkit-print-color-adjust: exact !important;
+                  print-color-adjust: exact !important;
+                  color-adjust: exact !important;
                 }
                 #printable-barcode-sheet {
                   position: absolute !important;
@@ -4995,11 +5010,24 @@ export default function DelhiStationInventoryApp() {
                   top: 0 !important;
                   width: 100% !important;
                   background: white !important;
-                  padding: 1.5rem !important;
+                  padding: 0 !important;
                   margin: 0 !important;
                   display: grid !important;
                   grid-template-cols: repeat(2, minmax(0, 1fr)) !important;
-                  gap: 1.5rem !important;
+                  gap: 1rem !important;
+                  overflow: visible !important;
+                }
+                #printable-barcode-sheet > div {
+                  break-inside: avoid !important;
+                  page-break-inside: avoid !important;
+                  overflow: visible !important;
+                  border: 2px solid #cbd5e1 !important;
+                  background-color: #ffffff !important;
+                }
+                #printable-barcode-sheet svg {
+                  display: block !important;
+                  visibility: visible !important;
+                  max-width: 100% !important;
                 }
               }
             `}} />
@@ -5086,14 +5114,17 @@ export default function DelhiStationInventoryApp() {
 
                         {/* QR Code */}
                         <div className="space-y-1 mt-auto flex flex-col items-center">
-                          <QRCodeCanvas 
+                          <QRCodeSVG 
                             value={JSON.stringify({
                               article_number: item.article_number, 
                               description: item.description,
                               location: item.location || 'UNALLOCATED'
                             })} 
-                            size={80}
-                            className="border border-slate-200 p-1"
+                            size={84}
+                            level="M"
+                            bgColor="#ffffff"
+                            fgColor="#000000"
+                            className="border border-slate-200 p-1 bg-white"
                           />
                           <div className="text-center font-mono text-[9px] text-slate-500 font-bold tracking-widest mt-1">
                             {item.article_number}
