@@ -11,6 +11,7 @@ import GoogleWorkspaceModal from '@/components/GoogleWorkspaceModal';
 import EditArticleModal from '@/components/EditArticleModal';
 import DeleteConfirmModal from '@/components/DeleteConfirmModal';
 import ManualPOModal from '@/components/ManualPOModal';
+import { ExcelStockGrid } from '@/components/ExcelStockGrid';
 import {
   Package,
   Barcode,
@@ -58,7 +59,12 @@ import {
   Save,
   FileText,
   CloudUpload,
-  AlertCircle
+  AlertCircle,
+  RotateCcw,
+  Check,
+  TableProperties,
+  Zap,
+  Sliders
 } from 'lucide-react';
 import {
   StockMaster,
@@ -200,8 +206,16 @@ export default function DelhiStationInventoryApp() {
   const [channelFilter, setChannelFilter] = useState<'All' | 'Central' | 'Local'>('All');
   const [stockFilter, setStockFilter] = useState<'All' | 'Healthy' | 'Low' | 'Action Needed' | 'Suppressed'>('All');
   const [locationFilter, setLocationFilter] = useState<string>('All');
-  const [stockViewMode, setStockViewMode] = useState<'table' | 'grouped'>('table');
+  const [stockViewMode, setStockViewMode] = useState<'table' | 'grouped' | 'gridEdit'>('table');
   const [collapsedLocations, setCollapsedLocations] = useState<Record<string, boolean>>({});
+
+  // Quick Excel Grid Editing States
+  const [gridEdits, setGridEdits] = useState<Record<string, Partial<StockMaster>>>({});
+  const [gridAutoSave, setGridAutoSave] = useState<boolean>(true);
+  const [gridSavedToast, setGridSavedToast] = useState<string | null>(null);
+  const [gridSaveError, setGridSaveError] = useState<string | null>(null);
+  const [isBatchSavingGrid, setIsBatchSavingGrid] = useState<boolean>(false);
+  const [batchLocationInput, setBatchLocationInput] = useState<string>('');
 
   // Scanner Simulator States
   const [scannedBarcode, setScannedBarcode] = useState('');
@@ -548,6 +562,192 @@ export default function DelhiStationInventoryApp() {
       location: ''
     });
     setIsArticleModalOpen(true);
+  };
+
+  // Excel Quick Grid Edit Handlers
+  const handleGridCellChange = (
+    articleNumber: string,
+    field: keyof StockMaster,
+    rawValue: any,
+    autoSaveImmediate = false
+  ) => {
+    const article = db.stockMaster.find(a => a.article_number === articleNumber);
+    if (!article) return;
+
+    let value: any = rawValue;
+    if ([
+      'units_per_box',
+      'boxes_per_pack',
+      'estimated_monthly_usage',
+      'min_quantity',
+      'reorder_level',
+      'max_quantity',
+      'lead_time_days',
+      'currentStock'
+    ].includes(field as string)) {
+      const parsed = parseFloat(rawValue);
+      value = isNaN(parsed) ? 0 : parsed;
+    }
+
+    const updatedRowEdits = {
+      ...(gridEdits[articleNumber] || {}),
+      [field]: value
+    };
+
+    setGridEdits(prev => ({
+      ...prev,
+      [articleNumber]: updatedRowEdits
+    }));
+
+    if ((gridAutoSave || autoSaveImmediate) && article) {
+      const merged = { ...article, ...updatedRowEdits };
+      merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
+      const estimatedUsage = merged.estimated_monthly_usage || 0;
+      merged.dailyBurn = estimatedUsage / 30;
+      const stock = merged.currentStock ?? 0;
+      const reorder = merged.reorder_level ?? 0;
+      const minQ = merged.min_quantity ?? 0;
+
+      if (stock <= reorder) {
+        merged.statusLabel = 'Action Needed';
+      } else if (stock <= minQ * 1.2) {
+        merged.statusLabel = 'Low';
+      } else {
+        merged.statusLabel = 'Healthy';
+      }
+
+      const nextMaster = db.stockMaster.map(item =>
+        item.article_number === articleNumber ? merged : item
+      );
+      updateDb({ ...db, stockMaster: nextMaster });
+      saveStockMasterToFirestore(merged).catch(err => {
+        console.error("Firestore grid auto-save error:", err);
+      });
+    }
+  };
+
+  const handleSaveGridRow = async (article: StockMaster) => {
+    const rowEdit = gridEdits[article.article_number];
+    if (!rowEdit || Object.keys(rowEdit).length === 0) return;
+
+    const merged = { ...article, ...rowEdit };
+    merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
+    const estimatedUsage = merged.estimated_monthly_usage || 0;
+    merged.dailyBurn = estimatedUsage / 30;
+    const stock = merged.currentStock ?? 0;
+    const reorder = merged.reorder_level ?? 0;
+    const minQ = merged.min_quantity ?? 0;
+
+    if (stock <= reorder) {
+      merged.statusLabel = 'Action Needed';
+    } else if (stock <= minQ * 1.2) {
+      merged.statusLabel = 'Low';
+    } else {
+      merged.statusLabel = 'Healthy';
+    }
+
+    const nextMaster = db.stockMaster.map(item =>
+      item.article_number === article.article_number ? merged : item
+    );
+    updateDb({ ...db, stockMaster: nextMaster });
+
+    try {
+      await saveStockMasterToFirestore(merged);
+      setGridEdits(prev => {
+        const copy = { ...prev };
+        delete copy[article.article_number];
+        return copy;
+      });
+      setGridSavedToast(`Article ${article.article_number} updated and saved to Firestore!`);
+      setTimeout(() => setGridSavedToast(null), 3000);
+    } catch (err: any) {
+      console.error("Firestore row save error:", err);
+      setGridSaveError(`Error saving ${article.article_number}: ${err.message || err}`);
+      setTimeout(() => setGridSaveError(null), 4000);
+    }
+  };
+
+  const handleDiscardGridRow = (articleNumber: string) => {
+    setGridEdits(prev => {
+      const copy = { ...prev };
+      delete copy[articleNumber];
+      return copy;
+    });
+  };
+
+  const handleSaveAllGridEdits = async () => {
+    const modifiedArticles = Object.keys(gridEdits);
+    if (modifiedArticles.length === 0) return;
+
+    setIsBatchSavingGrid(true);
+    setGridSaveError(null);
+
+    try {
+      let nextMaster = [...db.stockMaster];
+      const savedList: StockMaster[] = [];
+
+      for (const artNum of modifiedArticles) {
+        const original = nextMaster.find(a => a.article_number === artNum);
+        if (original) {
+          const edits = gridEdits[artNum];
+          const merged = { ...original, ...edits };
+          merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
+          const estimatedUsage = merged.estimated_monthly_usage || 0;
+          merged.dailyBurn = estimatedUsage / 30;
+          const stock = merged.currentStock ?? 0;
+          const reorder = merged.reorder_level ?? 0;
+          const minQ = merged.min_quantity ?? 0;
+
+          if (stock <= reorder) {
+            merged.statusLabel = 'Action Needed';
+          } else if (stock <= minQ * 1.2) {
+            merged.statusLabel = 'Low';
+          } else {
+            merged.statusLabel = 'Healthy';
+          }
+
+          nextMaster = nextMaster.map(a => a.article_number === artNum ? merged : a);
+          savedList.push(merged);
+        }
+      }
+
+      updateDb({ ...db, stockMaster: nextMaster });
+
+      await Promise.all(savedList.map(item => saveStockMasterToFirestore(item)));
+
+      setGridEdits({});
+      playBeep();
+      setGridSavedToast(`Successfully updated and synced ${savedList.length} articles to Firebase Firestore!`);
+      setTimeout(() => setGridSavedToast(null), 4000);
+    } catch (err: any) {
+      console.error("Batch grid save error:", err);
+      setGridSaveError(`Error saving changes: ${err.message || err}`);
+    } finally {
+      setIsBatchSavingGrid(false);
+    }
+  };
+
+  const handleDiscardAllGridEdits = () => {
+    setGridEdits({});
+  };
+
+  const handleBulkApplyLocation = (newLoc: string) => {
+    if (!newLoc.trim()) return;
+    const targetNums = selectedArticleNumbers.length > 0
+      ? selectedArticleNumbers
+      : filteredArticles.map(a => a.article_number);
+
+    const updatedEdits = { ...gridEdits };
+    targetNums.forEach(num => {
+      updatedEdits[num] = {
+        ...(updatedEdits[num] || {}),
+        location: newLoc.trim().toUpperCase()
+      };
+    });
+    setGridEdits(updatedEdits);
+    setBatchLocationInput('');
+    setGridSavedToast(`Updated location to "${newLoc.trim().toUpperCase()}" for ${targetNums.length} items. Click "Save All" or leave auto-save enabled.`);
+    setTimeout(() => setGridSavedToast(null), 4000);
   };
 
   const handleOpenEditModal = (article: StockMaster) => {
@@ -2641,14 +2841,27 @@ export default function DelhiStationInventoryApp() {
                 {currentUser?.role === 'admin' && (
                   <>
                     <button
+                      onClick={() => setStockViewMode(stockViewMode === 'gridEdit' ? 'table' : 'gridEdit')}
+                      className={`font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer ${
+                        stockViewMode === 'gridEdit'
+                          ? 'bg-slate-800 hover:bg-slate-900 text-white'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      }`}
+                      title="Toggle Excel Spreadsheet Style Quick Grid Edit Mode"
+                    >
+                      <TableProperties className="w-4 h-4" />
+                      <span>{stockViewMode === 'gridEdit' ? 'Exit Grid Mode' : 'Edit in Grid View'}</span>
+                    </button>
+
+                    <button
                       onClick={() => setIsExcelImportModalOpen(true)}
-                      className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5"
+                      className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
                     >
                       <FileSpreadsheet className="w-4 h-4" /> Import from Excel
                     </button>
                     <button
                       onClick={handleOpenAddModal}
-                      className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5"
+                      className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" /> Add Master Item
                     </button>
@@ -2708,7 +2921,7 @@ export default function DelhiStationInventoryApp() {
                 </select>
 
                 {/* View Mode Toggle */}
-                <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 ml-auto">
+                <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 ml-auto flex-wrap gap-0.5">
                   <button
                     onClick={() => setStockViewMode('table')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
@@ -2719,6 +2932,17 @@ export default function DelhiStationInventoryApp() {
                     title="Standard Data Grid Table View"
                   >
                     <List className="w-3.5 h-3.5" /> Table
+                  </button>
+                  <button
+                    onClick={() => setStockViewMode('gridEdit')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                      stockViewMode === 'gridEdit'
+                        ? 'bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-500'
+                        : 'text-slate-600 hover:text-emerald-700 hover:bg-emerald-50/50'
+                    }`}
+                    title="Excel-like Quick Grid Edit Mode (Inline spreadsheet updates for multiple items)"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" /> Excel Quick Edit
                   </button>
                   <button
                     onClick={() => setStockViewMode('grouped')}
@@ -2781,9 +3005,19 @@ export default function DelhiStationInventoryApp() {
             )}
 
              {selectedArticleNumbers.length > 0 && (
-               <div className="flex items-center gap-4 p-4 bg-amber-50 border-t border-b border-amber-200">
-                 <span className="text-xs font-bold text-amber-800">Bulk Edit ({selectedArticleNumbers.length}):</span>
-                 <button className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 cursor-pointer" onClick={() => {
+               <div className="flex flex-wrap items-center gap-3 p-3 px-4 bg-amber-50 border-t border-b border-amber-200 text-xs">
+                 <span className="font-bold text-amber-900">
+                   Bulk Actions ({selectedArticleNumbers.length} selected):
+                 </span>
+                 <button
+                   onClick={() => setStockViewMode('gridEdit')}
+                   className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                 >
+                   <TableProperties className="w-3.5 h-3.5" /> Edit Selected in Excel Grid Mode
+                 </button>
+                 <button
+                   className="bg-rose-600 text-white font-bold px-3 py-1.5 rounded-lg hover:bg-rose-700 transition cursor-pointer shadow-2xs"
+                   onClick={() => {
                      setConfirmDeleteModal({
                        isOpen: true,
                        type: 'bulk-articles',
@@ -2791,12 +3025,40 @@ export default function DelhiStationInventoryApp() {
                        title: 'Bulk Delete Articles',
                        description: `Are you sure you want to delete ${selectedArticleNumbers.length} selected articles?`
                      });
-                 }}>Delete Selected</button>
+                   }}
+                 >
+                   Delete Selected
+                 </button>
                </div>
              )}
 
-            {/* Render View: Grouped by Location vs Data Grid Table */}
-            {stockViewMode === 'grouped' ? (
+            {/* Render View: Excel Grid Edit vs Grouped by Location vs Standard Table */}
+            {stockViewMode === 'gridEdit' ? (
+              <ExcelStockGrid
+                filteredArticles={filteredArticles}
+                selectedArticleNumbers={selectedArticleNumbers}
+                setSelectedArticleNumbers={setSelectedArticleNumbers}
+                gridEdits={gridEdits}
+                setGridEdits={setGridEdits}
+                gridAutoSave={gridAutoSave}
+                setGridAutoSave={setGridAutoSave}
+                gridSavedToast={gridSavedToast}
+                setGridSavedToast={setGridSavedToast}
+                gridSaveError={gridSaveError}
+                setGridSaveError={setGridSaveError}
+                isBatchSavingGrid={isBatchSavingGrid}
+                batchLocationInput={batchLocationInput}
+                setBatchLocationInput={setBatchLocationInput}
+                uniqueLocations={uniqueLocations}
+                handleGridCellChange={handleGridCellChange}
+                handleSaveGridRow={handleSaveGridRow}
+                handleSaveAllGridEdits={handleSaveAllGridEdits}
+                handleDiscardGridRow={handleDiscardGridRow}
+                handleDiscardAllGridEdits={handleDiscardAllGridEdits}
+                handleBulkApplyLocation={handleBulkApplyLocation}
+                onExitGridMode={() => setStockViewMode('table')}
+              />
+            ) : stockViewMode === 'grouped' ? (
               <div className="space-y-6">
                 {articlesByLocation.length === 0 ? (
                   <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400">
