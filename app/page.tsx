@@ -9,7 +9,6 @@ import { QRCodeCanvas } from 'qrcode.react';
 import PublicSearch from '@/components/PublicSearch';
 import GoogleWorkspaceModal from '@/components/GoogleWorkspaceModal';
 import EditArticleModal from '@/components/EditArticleModal';
-import ItemPhotoModal from '@/components/ItemPhotoModal';
 import DeleteConfirmModal from '@/components/DeleteConfirmModal';
 import ManualPOModal from '@/components/ManualPOModal';
 import {
@@ -201,7 +200,7 @@ export default function DelhiStationInventoryApp() {
   const [channelFilter, setChannelFilter] = useState<'All' | 'Central' | 'Local'>('All');
   const [stockFilter, setStockFilter] = useState<'All' | 'Healthy' | 'Low' | 'Action Needed' | 'Suppressed'>('All');
   const [locationFilter, setLocationFilter] = useState<string>('All');
-  const [stockViewMode, setStockViewMode] = useState<'gallery' | 'table' | 'grouped'>('gallery');
+  const [stockViewMode, setStockViewMode] = useState<'table' | 'grouped'>('table');
   const [collapsedLocations, setCollapsedLocations] = useState<Record<string, boolean>>({});
 
   // Scanner Simulator States
@@ -246,125 +245,10 @@ export default function DelhiStationInventoryApp() {
     order_volume: 1000,
     ordering_channel: 'Local',
     lead_time_days: 5,
-    image_url: '',
-    image_base64: '',
     location: '',
     quantity_details: '',
     add_info: ''
   });
-
-  // Location search selected article
-  const [activePhotoModalArticle, setActivePhotoModalArticle] = useState<StockMaster | null>(null);
-  const [stagedPhotoBase64, setStagedPhotoBase64] = useState<string | null>(null);
-  const [isSavingPhoto, setIsSavingPhoto] = useState<boolean>(false);
-  const [photoSuccessMsg, setPhotoSuccessMsg] = useState<string | null>(null);
-  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const photoVideoRef = useRef<HTMLVideoElement | null>(null);
-  const photoStreamRef = useRef<MediaStream | null>(null);
-
-  const compressImageFile = async (fileOrBlob: File | Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-          const maxDim = 800;
-          if (width > height) {
-            if (width > maxDim) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            }
-          } else {
-            if (height > maxDim) {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject(new Error('Could not get canvas context'));
-            return;
-          }
-          ctx.drawImage(img, 0, 0, width, height);
-          const dataUrl = canvas.toDataURL('image/webp', 0.8);
-          resolve(dataUrl);
-        };
-        img.onerror = reject;
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(fileOrBlob);
-    });
-  };
-
-  const startPhotoCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      photoStreamRef.current = stream;
-      setIsCameraActive(true);
-      setTimeout(() => {
-        if (photoVideoRef.current) {
-          photoVideoRef.current.srcObject = stream;
-        }
-      }, 150);
-    } catch (err) {
-      console.error("Error accessing camera:", err);
-      alert("Could not access device camera. Please check camera permissions or use file upload.");
-    }
-  };
-
-  const getItemPhotoPath = (article_number?: string, image_url?: string) => {
-    if (article_number) {
-      const item = db.stockMaster.find(sm => sm.article_number === article_number);
-      if (item && item.image_base64 && item.image_base64.startsWith('data:image')) {
-        return item.image_base64;
-      }
-    }
-    if (image_url && image_url.trim()) {
-      return image_url;
-    }
-    if (article_number) {
-      return `/inventory/${article_number}.jpg`;
-    }
-    return '/inventory/placeholder.jpg';
-  };
-
-  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
-    e.currentTarget.src = "/inventory/placeholder.jpg";
-  };
-
-  const ItemPhotoTrigger = ({ item }: { item: StockMaster }) => {
-    const photoSrc = getItemPhotoPath(item.article_number, item.image_url);
-    return (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setActivePhotoModalArticle(item);
-        }}
-        className="relative group shrink-0 focus:outline-none cursor-pointer inline-flex items-center"
-        title="Click to view item photo"
-      >
-        <div className="relative w-8 h-8 rounded-full overflow-hidden border border-slate-300 shadow-xs hover:ring-2 hover:ring-amber-400 transition">
-          <img 
-            src={photoSrc} 
-            alt={item.description} 
-            onError={handleImgError}
-            className="w-full h-full object-cover" 
-          />
-          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-            <Eye className="w-3.5 h-3.5 text-white" />
-          </div>
-        </div>
-      </button>
-    );
-  };
 
   // Manual PO modal and Workflow state variables
   const [isManualPOModalOpen, setIsManualPOModalOpen] = useState(false);
@@ -661,8 +545,6 @@ export default function DelhiStationInventoryApp() {
       order_volume: 1000,
       ordering_channel: 'Local',
       lead_time_days: 5,
-      image_url: 'https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=150&auto=format&fit=crop&q=60',
-      image_base64: '',
       location: ''
     });
     setIsArticleModalOpen(true);
@@ -759,31 +641,9 @@ export default function DelhiStationInventoryApp() {
       return;
     }
 
-    let savedImageUrl = articleForm.image_url || '';
-    if (articleForm.image_base64 && articleForm.image_base64.startsWith('data:image')) {
-      try {
-        const uploadRes = await fetch('/api/upload-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            article_number: articleForm.article_number,
-            image_base64: articleForm.image_base64
-          })
-        });
-        const uploadData = await uploadRes.json();
-        if (uploadData.success && uploadData.image_url) {
-          savedImageUrl = uploadData.image_url;
-        }
-      } catch (err) {
-        console.error("Error saving image to app server:", err);
-      }
-    }
-
     let nextMaster = [...db.stockMaster];
     const finalArticle: StockMaster = {
       ...articleForm,
-      image_url: savedImageUrl || articleForm.image_url || '',
-      image_base64: articleForm.image_base64 || '',
       units_per_box: Number(articleForm.units_per_box) || 1,
       boxes_per_pack: Number(articleForm.boxes_per_pack) || 1,
       estimated_monthly_usage: Number(articleForm.estimated_monthly_usage) || 0,
@@ -872,23 +732,6 @@ export default function DelhiStationInventoryApp() {
       setColumnMapping(initialMapping);
     };
     reader.readAsArrayBuffer(file);
-  };
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      try {
-        const compressedBase64 = await compressImageFile(file);
-        setArticleForm(prev => ({ ...prev, image_base64: compressedBase64, image_url: '' }));
-      } catch (err) {
-        console.error("Error compressing uploaded image:", err);
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setArticleForm(prev => ({ ...prev, image_base64: reader.result as string, image_url: '' }));
-        };
-        reader.readAsDataURL(file);
-      }
-    }
   };
 
   const handleQuickOrder = (article: StockMaster) => {
@@ -2590,12 +2433,7 @@ export default function DelhiStationInventoryApp() {
                                     {/* Article Details Column */}
                                     <td className="p-3 min-w-[200px]">
                                       <div className="flex items-center gap-2.5">
-                                        <img 
-                                          src={getItemPhotoPath(article.article_number, article.image_url)} 
-                                          alt={article.description} 
-                                          onError={handleImgError}
-                                          className="w-10 h-10 rounded-md object-cover border border-slate-200 shrink-0" 
-                                        />
+                                        
                                         <div className="min-w-0">
                                           <div className="flex flex-wrap items-center gap-1.5">
                                             <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1 rounded text-[10px]">
@@ -2861,17 +2699,6 @@ export default function DelhiStationInventoryApp() {
                 {/* View Mode Toggle */}
                 <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 ml-auto">
                   <button
-                    onClick={() => setStockViewMode('gallery')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
-                      stockViewMode === 'gallery'
-                        ? 'bg-amber-500 text-white shadow-xs'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                    title="Gallery Cards View with Article Pictures & Status Markers"
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5" /> Gallery
-                  </button>
-                  <button
                     onClick={() => setStockViewMode('table')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
                       stockViewMode === 'table'
@@ -2957,256 +2784,8 @@ export default function DelhiStationInventoryApp() {
                </div>
              )}
 
-            {/* Render View: Gallery Cards vs Grouped by Location vs Data Grid Table */}
-            {stockViewMode === 'gallery' ? (
-              <div className="space-y-4">
-                {filteredArticles.length === 0 ? (
-                  <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400 shadow-sm">
-                    <Package className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                    <h3 className="text-sm font-bold text-slate-700">No stock articles found</h3>
-                    <p className="text-xs text-slate-400 mt-1 font-sans">Try adjusting your search query or filter options.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                    {filteredArticles.map((article, index) => {
-                      const photoSrc = getItemPhotoPath(article.article_number, article.image_url);
-                      const isSelected = selectedArticleNumbers.includes(article.article_number);
-                      
-                      // Status marker color calculation:
-                      // Green: Healthy stock
-                      // Yellow: Low stock or Suppressed (PO in transit)
-                      // Red: Action Needed / Critical low / Out of stock
-                      let statusBadgeText = '🟢 Healthy Stock';
-                      let borderAccent = 'border-t-emerald-500 hover:border-emerald-600';
-                      let bgCard = 'bg-white';
-                      let badgeBg = 'bg-emerald-500 text-white border-emerald-400';
-                      let stockTextCol = 'text-emerald-700';
-
-                      if (article.statusLabel === 'Action Needed' || article.currentStock <= article.min_quantity || article.currentStock === 0) {
-                        statusBadgeText = '🔴 Action Needed';
-                        borderAccent = 'border-t-red-500 hover:border-red-600';
-                        bgCard = 'bg-red-50/20';
-                        badgeBg = 'bg-red-600 text-white border-red-500 animate-pulse';
-                        stockTextCol = 'text-red-700';
-                      } else if (article.statusLabel === 'Suppressed') {
-                        statusBadgeText = '⏳ Suppressed (PO Active)';
-                        borderAccent = 'border-t-amber-500 hover:border-amber-600';
-                        bgCard = 'bg-amber-50/20';
-                        badgeBg = 'bg-amber-500 text-white border-amber-400';
-                        stockTextCol = 'text-amber-800';
-                      } else if (article.statusLabel === 'Low' || article.currentStock <= article.reorder_level) {
-                        statusBadgeText = '🟡 Low Stock';
-                        borderAccent = 'border-t-amber-500 hover:border-amber-600';
-                        bgCard = 'bg-amber-50/20';
-                        badgeBg = 'bg-amber-500 text-white border-amber-400';
-                        stockTextCol = 'text-amber-700';
-                      }
-
-                      // Gauge percentage
-                      const maxTarget = Math.max(article.max_quantity || 1, article.reorder_level || 1, 1);
-                      const pct = Math.min(100, Math.round((article.currentStock / maxTarget) * 100));
-
-                      return (
-                        <div 
-                          key={`gallery-${article.article_number}-${index}`}
-                          className={`group border border-slate-200 border-t-4 ${borderAccent} rounded-2xl ${bgCard} shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative`}
-                        >
-                          <div>
-                            {/* Top Picture Container */}
-                            <div className="relative h-44 w-full bg-slate-900 overflow-hidden flex items-center justify-center group/img">
-                              {photoSrc ? (
-                                <img 
-                                  src={photoSrc} 
-                                  alt={article.description} 
-                                  className="w-full h-full object-cover group-hover/img:scale-105 transition-transform duration-300"
-                                  onError={handleImgError}
-                                />
-                              ) : (
-                                <div className="w-full h-full bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 flex flex-col items-center justify-center p-4 text-center">
-                                  <Package className="w-10 h-10 text-slate-600 mb-1" />
-                                  <span className="text-[11px] text-slate-400 font-medium">No Image Available</span>
-                                </div>
-                              )}
-
-                              {/* Dark gradient overlay for text readability */}
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none" />
-
-                              {/* Bulk Checkbox Overlay */}
-                              <div className="absolute top-2.5 left-2.5 z-10">
-                                <input 
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    if (e.target.checked) {
-                                      setSelectedArticleNumbers([...selectedArticleNumbers, article.article_number]);
-                                    } else {
-                                      setSelectedArticleNumbers(selectedArticleNumbers.filter(num => num !== article.article_number));
-                                    }
-                                  }}
-                                  className="w-4 h-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400 cursor-pointer shadow-xs bg-white/90"
-                                />
-                              </div>
-
-                              {/* Color-Coded Health Status Marker (Green, Yellow, or Red) */}
-                              <div className="absolute top-2.5 right-2.5 z-10">
-                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold shadow-md flex items-center gap-1 border ${badgeBg}`}>
-                                  {statusBadgeText}
-                                </span>
-                              </div>
-
-                              {/* Photo & Camera trigger overlay */}
-                              <div className="absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActivePhotoModalArticle(article);
-                                    startPhotoCamera();
-                                  }}
-                                  className="bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-extrabold px-2.5 py-1 rounded-lg shadow-md flex items-center gap-1 transition border border-amber-300 cursor-pointer active:scale-95"
-                                  title="Activate device camera to take live item photo"
-                                >
-                                  <Camera className="w-3 h-3 text-slate-950" />
-                                  <span>Camera</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActivePhotoModalArticle(article);
-                                  }}
-                                  className="bg-black/70 hover:bg-black text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-xs flex items-center gap-1 transition border border-white/20 cursor-pointer"
-                                  title={photoSrc ? "View or edit stored photo" : "Upload or manage photo"}
-                                >
-                                  {photoSrc ? "View Photo" : "+ Add"}
-                                </button>
-                              </div>
-
-                              {/* Location tag overlay */}
-                              <div className="absolute bottom-2.5 left-2.5 z-10 max-w-[65%] truncate">
-                                <span className="bg-slate-900/80 backdrop-blur-xs text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded text-[10px] font-bold font-mono flex items-center gap-1 truncate">
-                                  <MapPin className="w-2.5 h-2.5 shrink-0 text-indigo-400" />
-                                  <span className="truncate">{article.location || 'UNALLOCATED'}</span>
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Card Content Body */}
-                            <div className="p-4 space-y-3">
-                              {/* Article Number Header & Barcode */}
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200 tracking-wide">
-                                  Art #{article.article_number}
-                                </span>
-                                {article.barcode && (
-                                  <span className="font-mono text-[10px] text-slate-400 flex items-center gap-1 shrink-0">
-                                    <Barcode className="w-3 h-3 text-slate-400" />
-                                    {article.barcode}
-                                  </span>
-                                )}
-                              </div>
-
-                              {/* Item Description */}
-                              <h4 className="font-bold text-sm text-slate-900 line-clamp-2 leading-snug hover:text-amber-600 transition" title={article.description}>
-                                {article.description}
-                              </h4>
-
-                              {/* Prominent Quantity In Stock Display */}
-                              <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 space-y-2">
-                                <div className="flex items-baseline justify-between gap-2">
-                                  <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">In Stock Quantity</span>
-                                  <div className="text-right">
-                                    <span className={`font-mono text-2xl font-black ${stockTextCol}`}>
-                                      {(article.currentStock ?? 0).toLocaleString()}
-                                    </span>
-                                    <span className="text-xs font-semibold text-slate-500 ml-1">
-                                      {article.smallest_unit_name || 'units'}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                {/* Free Text Quantity Details or Notes */}
-                                {(article.quantity_details || article.add_info) && (
-                                  <div className="text-[11px] text-slate-600 font-sans border-t border-slate-200/60 pt-1.5 flex flex-col gap-0.5">
-                                    {article.quantity_details && (
-                                      <p className="line-clamp-1 font-medium text-slate-700">📦 {article.quantity_details}</p>
-                                    )}
-                                    {article.add_info && (
-                                      <p className="line-clamp-1 italic text-slate-500 text-[10px]">💬 {article.add_info}</p>
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* Stock Gauge Progress Bar */}
-                                <div className="space-y-1 pt-0.5">
-                                  <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
-                                    <div 
-                                      className={`h-full transition-all duration-300 ${
-                                        stockTextCol.includes('red') ? 'bg-red-500' :
-                                        stockTextCol.includes('amber') ? 'bg-amber-500' :
-                                        'bg-emerald-500'
-                                      }`}
-                                      style={{ width: `${Math.max(5, pct)}%` }}
-                                    />
-                                  </div>
-                                  <div className="flex justify-between text-[9px] font-mono text-slate-400">
-                                    <span>Min: {article.min_quantity}</span>
-                                    <span>Reorder: {article.reorder_level}</span>
-                                    <span>Max: {article.max_quantity}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Card Footer Actions */}
-                          <div className="p-3 bg-slate-50 border-t border-slate-200/80 flex items-center justify-between gap-2 mt-1">
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => handleOpenEditModal(article)}
-                                className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition cursor-pointer"
-                                title="Edit Stock Item"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setConfirmDeleteModal({
-                                  isOpen: true,
-                                  type: 'article',
-                                  id: article.article_number,
-                                  title: 'Delete Article',
-                                  description: `Are you sure you want to delete article ${article.article_number} (${article.description})?`
-                                })}
-                                className="p-1.5 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
-                                title="Delete Article"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-
-                            <button
-                              onClick={() => handleQuickOrder(article)}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs ${
-                                stockTextCol.includes('red')
-                                  ? 'bg-red-600 hover:bg-red-700 text-white' 
-                                  : stockTextCol.includes('amber')
-                                  ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                                  : 'bg-slate-800 hover:bg-slate-900 text-white'
-                              }`}
-                              title="Create Purchase Order for this item"
-                            >
-                              <Truck className="w-3.5 h-3.5" />
-                              {stockTextCol.includes('red') ? 'Reorder Now' : 'Quick PO'}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            ) : stockViewMode === 'grouped' ? (
+            {/* Render View: Grouped by Location vs Data Grid Table */}
+            {stockViewMode === 'grouped' ? (
               <div className="space-y-6">
                 {articlesByLocation.length === 0 ? (
                   <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400">
@@ -3303,12 +2882,7 @@ export default function DelhiStationInventoryApp() {
                                     </td>
                                     <td className="p-4 max-w-sm">
                                       <div className="flex items-start gap-3">
-                                        <img 
-                                          src={getItemPhotoPath(article.article_number, article.image_url)} 
-                                          alt={article.description} 
-                                          onError={handleImgError}
-                                          className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0 mt-0.5"
-                                        />
+                                        
                                         <div className="space-y-1">
                                           <div className="flex items-center gap-1.5 flex-wrap">
                                             <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">
@@ -3490,12 +3064,6 @@ export default function DelhiStationInventoryApp() {
                             </td>
                             <td className="p-4 max-w-sm">
                               <div className="flex items-start gap-3">
-                                <img 
-                                  src={getItemPhotoPath(article.article_number, article.image_url)} 
-                                  alt={article.description} 
-                                  onError={handleImgError}
-                                  className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0 mt-0.5"
-                                />
                                 <div className="space-y-1">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">
@@ -3796,20 +3364,9 @@ export default function DelhiStationInventoryApp() {
                     className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-5"
                   >
                     <div className="flex items-start gap-4 border-b border-slate-100 pb-4">
-                      {scannedArticle ? (
-                        <img 
-                          src={getItemPhotoPath(scannedArticle.article_number, scannedArticle.image_url)} 
-                          alt={scannedArticle.description} 
-                          className="w-16 h-16 rounded-xl object-cover border border-slate-200 shadow-xs flex-shrink-0"
-                          onError={(e) => {
-                            (e.target as any).src = "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=150&auto=format&fit=crop&q=60";
-                          }}
-                        />
-                      ) : (
-                        <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center border border-slate-200 flex-shrink-0">
-                          <Package className="w-8 h-8 text-slate-400" />
-                        </div>
-                      )}
+                      <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center border border-slate-200 flex-shrink-0">
+                        <Package className="w-8 h-8 text-slate-400" />
+                      </div>
                       <div className="flex-grow">
                         <span className="text-xs font-mono font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded">
                           {scannedArticle.article_number}
@@ -4748,28 +4305,6 @@ export default function DelhiStationInventoryApp() {
         handleSaveArticle={handleSaveArticle}
         handleDeleteArticle={handleDeleteArticle}
         currentUser={currentUser}
-        getItemPhotoPath={getItemPhotoPath}
-        handleImgError={handleImgError}
-        onPhotoUploaded={(artNum, freshUrl, base64) => {
-          const updatedMaster = db.stockMaster.map((item) =>
-            item.article_number === artNum 
-              ? { ...item, image_url: freshUrl, image_base64: base64 || item.image_base64 || '' } 
-              : item
-          );
-          const nextDb = {
-            ...db,
-            stockMaster: updatedMaster
-          };
-          setDb(nextDb);
-          saveDatabase(nextDb);
-
-          const updatedItem = updatedMaster.find((item) => item.article_number === artNum);
-          if (updatedItem) {
-            saveStockMasterToFirestore(updatedItem).catch((err) => {
-              console.error("Error persisting photo upload to Firestore:", err);
-            });
-          }
-        }}
       />
 
       {isExcelImportModalOpen && (
@@ -5036,8 +4571,6 @@ export default function DelhiStationInventoryApp() {
                             mappedItem.location = String(item[columnMapping.location] ?? '').trim();
                             mappedItem.quantity_details = String(item[columnMapping.quantity_details] ?? '').trim();
                             mappedItem.add_info = String(item[columnMapping.add_info] ?? '').trim();
-                            mappedItem.image_url = '';
-                            mappedItem.image_base64 = '';
                             return mappedItem;
                           });
 
@@ -5510,13 +5043,9 @@ export default function DelhiStationInventoryApp() {
               return (
                 <div className="space-y-4">
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 flex items-center gap-4">
-                    {article ? (
-                      <img src={getItemPhotoPath(article.article_number, article.image_url)} onError={handleImgError} alt={article.description} className="w-14 h-14 rounded-lg object-cover border border-slate-200 shrink-0" />
-                    ) : (
-                      <div className="w-14 h-14 rounded-lg bg-slate-200 flex items-center justify-center border border-slate-300 shrink-0">
-                        <Package className="w-7 h-7 text-slate-500" />
-                      </div>
-                    )}
+                    <div className="w-14 h-14 rounded-lg bg-slate-200 flex items-center justify-center border border-slate-300 shrink-0">
+                      <Package className="w-7 h-7 text-slate-500" />
+                    </div>
                     <div className="min-w-0 flex-grow text-xs space-y-1">
                       <div className="text-[10px] font-mono text-slate-400 font-bold uppercase">Article Specification</div>
                       <div className="font-bold text-slate-800 truncate text-sm">{article?.description || "Deleted Article"}</div>
@@ -5784,54 +5313,6 @@ export default function DelhiStationInventoryApp() {
           <Plus className="w-6 h-6 transition-transform duration-250" />
         </button>
       </div>
-
-      <ItemPhotoModal
-        enabled={process.env.NODE_ENV !== 'production'}
-        article={activePhotoModalArticle}
-        onClose={() => setActivePhotoModalArticle(null)}
-        getItemPhotoPath={getItemPhotoPath}
-        handleImgError={handleImgError}
-        setLightboxImageUrl={setLightboxImageUrl}
-        onPhotoUploaded={(artNum, freshUrl, base64) => {
-          const updatedMaster = db.stockMaster.map((item) =>
-            item.article_number === artNum 
-              ? { ...item, image_url: freshUrl, image_base64: base64 || item.image_base64 || '' } 
-              : item
-          );
-          const nextDb = {
-            ...db,
-            stockMaster: updatedMaster
-          };
-          setDb(nextDb);
-          saveDatabase(nextDb);
-
-          const updatedItem = updatedMaster.find((item) => item.article_number === artNum);
-          if (updatedItem) {
-            saveStockMasterToFirestore(updatedItem).catch((err) => {
-              console.error("Error persisting photo upload to Firestore from modal:", err);
-            });
-          }
-        }}
-      />
-
-      {/* FULL-SCREEN LIGHTBOX OVERLAY */}
-      {lightboxImageUrl && (
-        <div 
-          className="fixed inset-0 bg-black/90 z-[120] flex items-center justify-center p-4 backdrop-blur-sm cursor-zoom-out"
-          onClick={() => setLightboxImageUrl(null)}
-        >
-          <div className="relative max-w-4xl max-h-[90vh]">
-            <img src={lightboxImageUrl} alt="Expanded Lightbox View" className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl object-contain border border-white/10" />
-            <button
-              type="button"
-              onClick={() => setLightboxImageUrl(null)}
-              className="absolute -top-10 right-0 text-white hover:text-amber-400 text-2xl font-bold p-2 cursor-pointer"
-            >
-              &times;
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* LOGIN MODAL */}
       {isLoginModalOpen && (

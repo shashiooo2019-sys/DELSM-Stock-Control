@@ -101,8 +101,6 @@ export interface StockMaster {
   order_volume: number; // in smallest units
   ordering_channel: OrderingChannel;
   lead_time_days: number;
-  image_url?: string;
-  image_base64?: string;
   location?: string;
   quantity_details?: string;
   add_info?: string;
@@ -337,12 +335,7 @@ export function saveDatabase(data: {
   try {
     localStorage.setItem('delhi_stock_master', JSON.stringify(data.stockMaster));
   } catch (err) {
-    console.warn('LocalStorage quota exceeded, fallback without images:', err);
-    const strippedStockMaster = data.stockMaster.map(item => {
-      const { image_base64, ...rest } = item;
-      return rest;
-    });
-    localStorage.setItem('delhi_stock_master', JSON.stringify(strippedStockMaster));
+    console.warn('LocalStorage quota exceeded:', err);
   }
   localStorage.setItem('delhi_stock_taking_log', JSON.stringify(data.stockTakingLog));
   localStorage.setItem('delhi_purchase_orders', JSON.stringify(data.purchaseOrders));
@@ -378,8 +371,6 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
     }
     const cleanItem = sanitizeForFirestore({
       ...item,
-      image_base64: item.image_base64 ?? '',
-      image_url: item.image_url ?? '',
       quantity_details: item.quantity_details ?? '',
       add_info: item.add_info ?? ''
     });
@@ -455,8 +446,6 @@ export async function seedInitialFirestoreData() {
       const ref = doc(firestoreDb, 'stockMaster', item.article_number);
       const cleanItem = sanitizeForFirestore({
         ...item,
-        image_base64: item.image_base64 ?? '',
-        image_url: item.image_url ?? '',
         quantity_details: item.quantity_details ?? '',
         add_info: item.add_info ?? ''
       });

@@ -36,7 +36,6 @@ export default function PublicSearch({
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Healthy' | 'Low' | 'Action Needed' | 'Suppressed'>('All');
   const [locationFilter, setLocationFilter] = useState<string>('All');
-  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
 
   // Map article numbers to latest count log date
   const latestCountDates = useMemo(() => {
@@ -243,7 +242,6 @@ export default function PublicSearch({
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
             {filteredArticles.map(({ item }) => {
-              const photoSrc = item.image_base64 || item.image_url;
               const status = getItemStatus(item);
 
               // Status styles
@@ -293,58 +291,19 @@ export default function PublicSearch({
                   className={`group bg-white border border-slate-200 border-t-4 ${borderAccent} rounded-2xl shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative`}
                 >
                   <div>
-                    {/* Item Image Container */}
-                    <div className="relative h-44 w-full bg-slate-900 overflow-hidden flex items-center justify-center group/img">
-                      {photoSrc ? (
-                        <img 
-                          src={photoSrc} 
-                          alt={item.description} 
-                          className="w-full h-full object-cover group-hover/img:scale-105 transition-transform duration-300 cursor-pointer"
-                          onClick={() => setLightboxImageUrl(photoSrc)}
-                          onError={(e) => {
-                            (e.target as any).src = "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=400&auto=format&fit=crop&q=80";
-                          }}
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 flex flex-col items-center justify-center p-4 text-center">
-                          <Package className="w-10 h-10 text-slate-600 mb-1" />
-                          <span className="text-[11px] text-slate-400 font-medium">No Image Uploaded</span>
-                        </div>
-                      )}
-
-                      {/* Dark overlay for overlay text */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none" />
-
-                      {/* Status Badge Tag */}
-                      <div className="absolute top-2.5 right-2.5 z-10">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold shadow-md flex items-center gap-1 border ${badgeBg}`}>
+                    {/* Card Body */}
+                    <div className="p-4 space-y-3">
+                      {/* Header with Status Badge & Location Tag */}
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold shadow-2xs flex items-center gap-1 border ${badgeBg}`}>
                           {statusBadgeText}
                         </span>
-                      </div>
-
-                      {/* Expand Image Button */}
-                      {photoSrc && (
-                        <button
-                          type="button"
-                          onClick={() => setLightboxImageUrl(photoSrc)}
-                          className="absolute top-2.5 left-2.5 z-10 bg-black/60 hover:bg-black/90 text-white p-1.5 rounded-lg backdrop-blur-xs transition border border-white/20 cursor-pointer"
-                          title="View image full size"
-                        >
-                          <Maximize2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-
-                      {/* Location / Cupboard Tag */}
-                      <div className="absolute bottom-2.5 left-2.5 z-10 max-w-[80%] truncate">
-                        <span className="bg-slate-900/90 backdrop-blur-xs text-amber-300 border border-amber-500/40 px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono flex items-center gap-1.5 truncate shadow-sm">
-                          <MapPin className="w-3 h-3 shrink-0 text-amber-400" />
+                        <span className="bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5 rounded-lg text-[11px] font-bold font-mono flex items-center gap-1 truncate">
+                          <MapPin className="w-3 h-3 shrink-0 text-amber-500" />
                           <span className="truncate">Cupboard: {item.location || 'UNALLOCATED'}</span>
                         </span>
                       </div>
-                    </div>
 
-                    {/* Card Body */}
-                    <div className="p-4 space-y-3">
                       {/* Article Number Header & Barcode */}
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200 tracking-wide">
@@ -427,30 +386,6 @@ export default function PublicSearch({
                 </div>
               );
             })}
-          </div>
-        )}
-
-        {/* Lightbox Modal for enlarged picture viewing */}
-        {lightboxImageUrl && (
-          <div 
-            className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200"
-            onClick={() => setLightboxImageUrl(null)}
-          >
-            <div className="relative max-w-3xl max-h-[90vh] w-full flex items-center justify-center">
-              <button
-                type="button"
-                onClick={() => setLightboxImageUrl(null)}
-                className="absolute -top-10 right-0 text-white hover:text-amber-400 bg-black/60 p-2 rounded-full cursor-pointer transition border border-white/20"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <img
-                src={lightboxImageUrl}
-                alt="Enlarged view"
-                className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-slate-700"
-                onClick={(e) => e.stopPropagation()}
-              />
-            </div>
           </div>
         )}
 

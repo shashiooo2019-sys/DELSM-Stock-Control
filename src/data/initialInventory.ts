@@ -17,7 +17,6 @@ export const INITIAL_STOCK_MASTER: StockMaster[] = [
     order_volume: 1000,
     ordering_channel: "Central Ordering Team",
     lead_time_days: 14,
-    image_url: "/inventory/DS-1001.jpg",
     location: "Aisle A1 - Shelf 3",
     quantity_details: "45 Boxes (10 units/box)",
     add_info: "High demand luxury fountain pen with archival blue ink."
@@ -38,7 +37,6 @@ export const INITIAL_STOCK_MASTER: StockMaster[] = [
     order_volume: 3000,
     ordering_channel: "Central Ordering Team",
     lead_time_days: 20,
-    image_url: "/inventory/DS-1002.jpg",
     location: "Aisle A2 - Shelf 1",
     quantity_details: "8 Boxes (100 cards/box)",
     add_info: "Premium 300gsm cotton paper stock for wedding & formal stationery."
@@ -59,7 +57,6 @@ export const INITIAL_STOCK_MASTER: StockMaster[] = [
     order_volume: 800,
     ordering_channel: "Local",
     lead_time_days: 3,
-    image_url: "/inventory/DS-1003.jpg",
     location: "Aisle B1 - Bin 04",
     quantity_details: "5 Boxes + 30 loose bags",
     add_info: "Eco-friendly heavy kraft paper bags with braided cotton handles."
@@ -80,7 +77,6 @@ export const INITIAL_STOCK_MASTER: StockMaster[] = [
     order_volume: 6000,
     ordering_channel: "Local",
     lead_time_days: 4,
-    image_url: "/inventory/DS-1004.jpg",
     location: "Aisle B2 - Drawer 12",
     quantity_details: "17 Boxes + 100 seals",
     add_info: "Brass stamp heads with wooden handles & flexible metallic sealing wax."
@@ -101,7 +97,6 @@ export const INITIAL_STOCK_MASTER: StockMaster[] = [
     order_volume: 4000,
     ordering_channel: "Central Ordering Team",
     lead_time_days: 18,
-    image_url: "/inventory/DS-1005.jpg",
     location: "Aisle C1 - Rack 2",
     quantity_details: "4 Boxes (250 sheets/box)",
     add_info: "Textured deckle-edge parchment paper suitable for dip pen & ink."
