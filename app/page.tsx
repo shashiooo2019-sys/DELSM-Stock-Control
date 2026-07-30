@@ -1062,40 +1062,78 @@ export default function DelhiStationInventoryApp() {
 
   const handleExportToExcel = () => {
     const headers = [
-      "Article Number",
-      "Item Name",
-      "Packaging Breakdown",
-      "Quantity Details",
-      "Add Info",
-      "Actual Stock (Smallest Units)",
-      "Projected Stock (Today)",
-      "General Location",
+      "Article No",
+      "Item",
+      "CUPBOARD NO",
+      "SHELF",
+      "Quantity",
+      "Min order Qty",
+      "Ordering Channel",
+      "Estimated Delivery Time",
+      "No of Units in Box",
+      "No of Boxes in Pack",
+      "Cost per Pack",
+      "Min Qty",
+      "Max Qty",
+      "Reordering Level in Units",
+      "Monthly Unit consumption",
+      "Barcode",
+      "Current Stock (Units)",
       "Reorder Status",
-      "Pending PO numbers"
+      "Pending PO Numbers"
     ];
 
+    const parseLocation = (locStr: string | undefined) => {
+      if (!locStr || !locStr.trim()) return { cupboard: '', shelf: '' };
+      const str = locStr.trim();
+      if (str.includes(' - ')) {
+        const parts = str.split(' - ');
+        return { cupboard: parts[0].trim(), shelf: parts.slice(1).join(' - ').trim() };
+      }
+      if (str.includes(' / ')) {
+        const parts = str.split(' / ');
+        return { cupboard: parts[0].trim(), shelf: parts.slice(1).join(' / ').trim() };
+      }
+      if (str.includes(',')) {
+        const parts = str.split(',');
+        return { cupboard: parts[0].trim(), shelf: parts.slice(1).join(', ').trim() };
+      }
+      const shelfMatch = str.match(/^(.*?)(shelf.*)$/i);
+      if (shelfMatch && shelfMatch[1].trim()) {
+        return { cupboard: shelfMatch[1].trim(), shelf: shelfMatch[2].trim() };
+      }
+      return { cupboard: str, shelf: '' };
+    };
+
     const rows = filteredArticles.map(article => {
-      const packagingBreakdown = `1 Pack = ${article.boxes_per_pack} Boxes; 1 Box = ${article.units_per_box} ${article.smallest_unit_name}s; Total Pack = ${article.boxes_per_pack * article.units_per_box} ${article.smallest_unit_name}s`;
-      
+      const { cupboard, shelf } = parseLocation(article.location);
+
       const activePOs = db.purchaseOrders
         .filter(po => po.article_number === article.article_number && (po.status === 'Raised' || po.status === 'Approved'))
         .map(po => `${po.po_number} (${po.status})`)
         .join(', ') || "None";
 
-      const projectedStock = article.statusLabel === 'Suppressed' && article.suppression.projectedStockOnArrival !== null
-        ? article.suppression.projectedStockOnArrival
-        : Math.max(0, Math.round(article.currentStock - article.dailyBurn));
+      const deliveryTime = article.lead_time_days ? `${article.lead_time_days} Days` : "";
 
       return [
         article.article_number,
         article.description,
-        packagingBreakdown,
+        cupboard,
+        shelf,
         article.quantity_details || "",
+        article.min_order_qty || "",
+        article.ordering_channel || "Local",
+        deliveryTime,
+        article.units_per_box ?? 1,
+        article.boxes_per_pack ?? 1,
         article.add_info || "",
-        article.currentStock,
-        projectedStock,
-        article.location || "",
-        article.statusLabel,
+        article.min_quantity ?? 0,
+        article.max_quantity ?? 0,
+        article.reorder_level ?? 0,
+        article.estimated_monthly_usage ?? 0,
+        article.barcode || "",
+        article.currentStock ?? article.total_stock_quantity ?? 0,
+        article.statusLabel || "OK",
         activePOs
       ];
     });
