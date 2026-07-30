@@ -504,7 +504,6 @@ export function subscribeToDatabase(
 
   const unsubStock = onSnapshot(collection(firestoreDb, 'stockMaster'), (snapshot) => {
     stockMasterLoaded = true;
-    const deletedArticles = new Set(JSON.parse((typeof window !== 'undefined' && localStorage.getItem('delhi_deleted_articles')) || '[]'));
     
     if (snapshot.empty) {
       if (!isFirestoreInitialized) {
@@ -513,49 +512,43 @@ export function subscribeToDatabase(
         seedInitialFirestoreData();
       }
       const localDb = loadDatabase();
-      const baseList = localDb.stockMaster.length > 0 ? localDb.stockMaster : INITIAL_STOCK_MASTER;
-      currentStockMaster = baseList.filter(item => !deletedArticles.has(item.article_number));
+      currentStockMaster = localDb.stockMaster.length > 0 ? localDb.stockMaster : INITIAL_STOCK_MASTER;
     } else {
       isFirestoreInitialized = true;
       if (typeof window !== 'undefined') localStorage.setItem('delhi_stock_initialized', 'true');
       const firestoreItems = snapshot.docs.map(d => d.data() as StockMaster);
-      
-      const itemMap = new Map<string, StockMaster>();
-      INITIAL_STOCK_MASTER.forEach(item => itemMap.set(item.article_number, item));
-      const localDb = loadDatabase();
-      localDb.stockMaster.forEach(item => itemMap.set(item.article_number, item));
-      firestoreItems.forEach(item => itemMap.set(item.article_number, item));
-      
-      currentStockMaster = Array.from(itemMap.values()).filter(item => !deletedArticles.has(item.article_number));
+      currentStockMaster = firestoreItems;
     }
     notify();
   }, (err) => handleFirestoreError(err, OperationType.GET, 'stockMaster'));
 
   const unsubLogs = onSnapshot(collection(firestoreDb, 'stockTakingLogs'), (snapshot) => {
-    const firestoreLogs = snapshot.docs.map(d => d.data() as StockTakingLog);
-    const logMap = new Map<string, StockTakingLog>();
-    
-    INITIAL_STOCK_TAKING_LOG.forEach(log => logMap.set(log.log_id, log));
-    const localDb = loadDatabase();
-    localDb.stockTakingLog.forEach(log => logMap.set(log.log_id, log));
-    firestoreLogs.forEach(log => logMap.set(log.log_id, log));
-    
-    currentLogs = Array.from(logMap.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    if (snapshot.empty) {
+      if (!isFirestoreInitialized) {
+        currentLogs = INITIAL_STOCK_TAKING_LOG;
+      } else {
+        currentLogs = [];
+      }
+    } else {
+      const firestoreLogs = snapshot.docs.map(d => d.data() as StockTakingLog);
+      currentLogs = firestoreLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }
     if (stockMasterLoaded) {
       notify();
     }
   }, (err) => handleFirestoreError(err, OperationType.GET, 'stockTakingLogs'));
 
   const unsubPOs = onSnapshot(collection(firestoreDb, 'purchaseOrders'), (snapshot) => {
-    const firestorePOs = snapshot.docs.map(d => d.data() as PurchaseOrder);
-    const poMap = new Map<string, PurchaseOrder>();
-    
-    INITIAL_PURCHASE_ORDERS.forEach(po => poMap.set(po.po_number, po));
-    const localDb = loadDatabase();
-    localDb.purchaseOrders.forEach(po => poMap.set(po.po_number, po));
-    firestorePOs.forEach(po => poMap.set(po.po_number, po));
-    
-    currentPOs = Array.from(poMap.values());
+    if (snapshot.empty) {
+      if (!isFirestoreInitialized) {
+        currentPOs = INITIAL_PURCHASE_ORDERS;
+      } else {
+        currentPOs = [];
+      }
+    } else {
+      const firestorePOs = snapshot.docs.map(d => d.data() as PurchaseOrder);
+      currentPOs = firestorePOs;
+    }
     if (stockMasterLoaded) {
       notify();
     }
