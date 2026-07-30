@@ -1072,6 +1072,8 @@ export default function DelhiStationInventoryApp() {
     // If Rejected, we delete the order record to remain in the reorder queue with active alerts
     if (newStatus === 'Rejected') {
       deletePurchaseOrderFromFirestore(po.po_number);
+    } else {
+      savePurchaseOrderToFirestore(updatedPO).catch(err => console.error("Firestore PO state update error:", err));
     }
     const updatedPOs = newStatus === 'Rejected'
       ? db.purchaseOrders.filter(p => p.po_number !== po.po_number)
@@ -1131,6 +1133,14 @@ export default function DelhiStationInventoryApp() {
       purchaseOrders: [...updatedPOs, ...pendingPOs],
       stockMaster: updatedStockMaster
     });
+
+    // Save updates to Firestore
+    savePurchaseOrderToFirestore(updatedPO).catch(err => console.error("Firestore PO update on receive error:", err));
+    pendingPOs.forEach(p => savePurchaseOrderToFirestore(p).catch(err => console.error("Firestore pending PO save error:", err)));
+    const receivedItem = updatedStockMaster.find(article => article.article_number === po.article_number);
+    if (receivedItem) {
+      saveStockMasterToFirestore(receivedItem).catch(err => console.error("Firestore stockMaster update on receive error:", err));
+    }
 
     playBeep();
     if (selectedPOWorkflow && selectedPOWorkflow.po_number === po.po_number) {
@@ -2540,6 +2550,7 @@ export default function DelhiStationInventoryApp() {
                                             ...db,
                                             purchaseOrders: [...db.purchaseOrders, newPO]
                                           });
+                                          savePurchaseOrderToFirestore(newPO).catch(err => console.error("Firestore PO save error:", err));
 
                                           playBeep();
                                           setSelectedPOWorkflow(newPO);
@@ -4587,13 +4598,18 @@ export default function DelhiStationInventoryApp() {
                           let updatedCount = 0;
 
                           validItems.forEach(item => {
+                            let mergedItem: StockMaster;
                             if (existingItemsMap.has(item.article_number)) {
-                              existingItemsMap.set(item.article_number, { ...existingItemsMap.get(item.article_number), ...item });
+                              mergedItem = { ...existingItemsMap.get(item.article_number), ...item };
+                              existingItemsMap.set(item.article_number, mergedItem);
                               updatedCount++;
                             } else {
-                              existingItemsMap.set(item.article_number, item);
+                              mergedItem = item;
+                              existingItemsMap.set(item.article_number, mergedItem);
                               newCount++;
                             }
+                            // Save individual imported/updated items to Firestore
+                            saveStockMasterToFirestore(mergedItem).catch(err => console.error("Firestore Excel import item save error:", err));
                           });
 
                           updateDb({ 
