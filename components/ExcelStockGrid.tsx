@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileSpreadsheet,
   TableProperties,
@@ -14,7 +14,10 @@ import {
   Zap,
   LogOut,
   ArrowLeft,
-  X
+  X,
+  Pin,
+  MoveHorizontal,
+  Columns
 } from 'lucide-react';
 import { StockMaster } from '@/lib/db';
 
@@ -43,6 +46,27 @@ interface ExcelStockGridProps {
   onExitGridMode?: () => void;
 }
 
+const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
+  checkbox: 44,
+  article_number: 130,
+  description: 260,
+  location: 130,
+  currentStock: 145,
+  min_quantity: 95,
+  reorder_level: 105,
+  max_quantity: 95,
+  estimated_monthly_usage: 115,
+  barcode: 130,
+  ordering_channel: 130,
+  lead_time_days: 90,
+  boxes_per_pack: 90,
+  units_per_box: 90,
+  smallest_unit_name: 105,
+  quantity_details: 200,
+  add_info: 180,
+  actions: 100,
+};
+
 export function ExcelStockGrid({
   filteredArticles,
   selectedArticleNumbers,
@@ -67,6 +91,75 @@ export function ExcelStockGrid({
   handleBulkApplyLocation,
   onExitGridMode
 }: ExcelStockGridProps) {
+  // Column Widths State with LocalStorage Persistence
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('excel_grid_col_widths');
+        if (saved) {
+          return { ...DEFAULT_COLUMN_WIDTHS, ...JSON.parse(saved) };
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return DEFAULT_COLUMN_WIDTHS;
+  });
+
+  // Freeze Pane for Item Description Toggle
+  const [freezeDescription, setFreezeDescription] = useState<boolean>(true);
+  const [resizingCol, setResizingCol] = useState<string | null>(null);
+
+  // Column Resizing Handler
+  const handleResizeStart = (colKey: string, e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const startWidth = columnWidths[colKey] || DEFAULT_COLUMN_WIDTHS[colKey] || 100;
+    setResizingCol(colKey);
+
+    const handleMove = (moveEvent: MouseEvent | TouchEvent) => {
+      const currentX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : moveEvent.clientX;
+      const deltaX = currentX - clientX;
+      const newWidth = Math.max(40, startWidth + deltaX);
+      setColumnWidths((prev) => {
+        const updated = { ...prev, [colKey]: newWidth };
+        try {
+          localStorage.setItem('excel_grid_col_widths', JSON.stringify(updated));
+        } catch (err) {}
+        return updated;
+      });
+    };
+
+    const handleEnd = () => {
+      setResizingCol(null);
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleEnd);
+      window.removeEventListener('touchmove', handleMove);
+      window.removeEventListener('touchend', handleEnd);
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleEnd);
+    window.addEventListener('touchmove', handleMove);
+    window.addEventListener('touchend', handleEnd);
+  };
+
+  const handleResetWidths = () => {
+    setColumnWidths(DEFAULT_COLUMN_WIDTHS);
+    try {
+      localStorage.removeItem('excel_grid_col_widths');
+    } catch (err) {}
+  };
+
+  // Calculate Sticky Frozen Offsets
+  const checkboxWidth = columnWidths.checkbox || 44;
+  const articleWidth = columnWidths.article_number || 130;
+  const descWidth = columnWidths.description || 260;
+
+  const articleLeft = freezeDescription ? checkboxWidth : 0;
+  const descLeft = freezeDescription ? checkboxWidth + articleWidth : 0;
+
   return (
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col my-4">
       {/* Grid Header Toolbar */}
@@ -83,12 +176,36 @@ export function ExcelStockGrid({
               </span>
             </h3>
             <p className="text-xs text-slate-300">
-              Edit any field directly in the table like a spreadsheet. Changes sync to Firebase Firestore database.
+              Drag column borders to resize. Freeze pane keeps Item Description visible when scrolling right.
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {/* Freeze Pane Toggle */}
+          <button
+            onClick={() => setFreezeDescription(!freezeDescription)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs border transition cursor-pointer select-none ${
+              freezeDescription
+                ? 'bg-indigo-600 border-indigo-400 text-white shadow-sm'
+                : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+            }`}
+            title="Toggle Frozen Pane for Item Description & Article #"
+          >
+            <Pin className={`w-3.5 h-3.5 ${freezeDescription ? 'rotate-45 text-amber-300' : ''}`} />
+            <span>{freezeDescription ? 'Pane Frozen: Description' : 'Freeze Description Pane'}</span>
+          </button>
+
+          {/* Reset Column Sizes */}
+          <button
+            onClick={handleResetWidths}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+            title="Reset all column widths to defaults"
+          >
+            <Columns className="w-3.5 h-3.5 text-slate-400" />
+            <span>Reset Column Sizes</span>
+          </button>
+
           {/* Unsaved Edits Badge */}
           {Object.keys(gridEdits).length > 0 && (
             <div className="bg-amber-500/20 border border-amber-500/40 text-amber-300 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-2 animate-pulse">
@@ -178,7 +295,7 @@ export function ExcelStockGrid({
         <div className="flex items-center gap-2 text-slate-600 font-semibold">
           <span>Quick Excel Tools:</span>
           <span className="text-slate-400 font-normal">
-            Showing {filteredArticles.length} items (click any input field to edit)
+            Showing {filteredArticles.length} items • Hover column header edge and drag <MoveHorizontal className="w-3 h-3 inline text-slate-400" /> to resize
           </span>
         </div>
 
@@ -239,12 +356,18 @@ export function ExcelStockGrid({
         </div>
       </div>
 
-      {/* High Density Editable Excel Grid */}
-      <div className="overflow-x-auto max-h-[70vh]">
-        <table className="w-full text-left border-collapse border-spacing-0">
-          <thead className="sticky top-0 z-20 bg-slate-100 text-slate-700 text-[11px] uppercase tracking-wider font-bold border-b border-slate-300 shadow-2xs">
+      {/* High Density Editable Excel Grid with Resizable Columns & Freeze Pane */}
+      <div className="overflow-x-auto max-h-[70vh] relative select-none">
+        <table className="w-full text-left border-collapse border-spacing-0 table-fixed">
+          <thead className="sticky top-0 z-30 bg-slate-100 text-slate-700 text-[11px] uppercase tracking-wider font-bold border-b border-slate-300 shadow-2xs">
             <tr>
-              <th className="p-2 w-10 text-center bg-slate-100 border-r border-slate-200">
+              {/* Checkbox Column */}
+              <th
+                className={`p-2 border-r border-slate-200 text-center bg-slate-100 relative group ${
+                  freezeDescription ? 'sticky top-0 left-0 z-40 bg-slate-100' : ''
+                }`}
+                style={{ width: checkboxWidth, minWidth: checkboxWidth, maxWidth: checkboxWidth }}
+              >
                 <input
                   type="checkbox"
                   checked={selectedArticleNumbers.length > 0 && selectedArticleNumbers.length === filteredArticles.length}
@@ -256,24 +379,272 @@ export function ExcelStockGrid({
                     }
                   }}
                 />
+                <div
+                  onMouseDown={(e) => handleResizeStart('checkbox', e)}
+                  onTouchStart={(e) => handleResizeStart('checkbox', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
               </th>
-              <th className="p-2.5 min-w-[120px] bg-slate-100 border-r border-slate-200">Article #</th>
-              <th className="p-2.5 min-w-[220px] bg-slate-100 border-r border-slate-200">Description</th>
-              <th className="p-2.5 min-w-[130px] bg-slate-100 border-r border-slate-200">Location</th>
-              <th className="p-2.5 min-w-[130px] bg-slate-100 border-r border-slate-200">Current Stock</th>
-              <th className="p-2.5 min-w-[90px] bg-slate-100 border-r border-slate-200">Min Qty</th>
-              <th className="p-2.5 min-w-[90px] bg-slate-100 border-r border-slate-200">Reorder Level</th>
-              <th className="p-2.5 min-w-[90px] bg-slate-100 border-r border-slate-200">Max Qty</th>
-              <th className="p-2.5 min-w-[100px] bg-slate-100 border-r border-slate-200">Monthly Usage</th>
-              <th className="p-2.5 min-w-[130px] bg-slate-100 border-r border-slate-200">Barcode</th>
-              <th className="p-2.5 min-w-[130px] bg-slate-100 border-r border-slate-200">Route</th>
-              <th className="p-2.5 min-w-[80px] bg-slate-100 border-r border-slate-200">Lead Days</th>
-              <th className="p-2.5 min-w-[80px] bg-slate-100 border-r border-slate-200">Boxes/Pack</th>
-              <th className="p-2.5 min-w-[80px] bg-slate-100 border-r border-slate-200">Units/Box</th>
-              <th className="p-2.5 min-w-[90px] bg-slate-100 border-r border-slate-200">Unit Name</th>
-              <th className="p-2.5 min-w-[200px] bg-slate-100 border-r border-slate-200">Quantity Details</th>
-              <th className="p-2.5 min-w-[180px] bg-slate-100 border-r border-slate-200">Remarks / Add Info</th>
-              <th className="p-2.5 min-w-[100px] text-right bg-slate-100">Actions</th>
+
+              {/* Article # Column */}
+              <th
+                className={`p-2.5 border-r border-slate-200 bg-slate-100 relative group ${
+                  freezeDescription ? 'sticky top-0 z-40 bg-slate-100' : ''
+                }`}
+                style={{
+                  left: freezeDescription ? articleLeft : undefined,
+                  width: articleWidth,
+                  minWidth: articleWidth,
+                  maxWidth: articleWidth
+                }}
+              >
+                <div className="flex items-center justify-between pr-1">
+                  <span className="truncate">Article #</span>
+                </div>
+                <div
+                  onMouseDown={(e) => handleResizeStart('article_number', e)}
+                  onTouchStart={(e) => handleResizeStart('article_number', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Description Column (Frozen Pane Edge) */}
+              <th
+                className={`p-2.5 bg-slate-100 relative group ${
+                  freezeDescription
+                    ? 'sticky top-0 z-40 bg-slate-100 border-r-2 border-r-slate-400 shadow-[4px_0_10px_-2px_rgba(0,0,0,0.15)]'
+                    : 'border-r border-slate-200'
+                }`}
+                style={{
+                  left: freezeDescription ? descLeft : undefined,
+                  width: descWidth,
+                  minWidth: descWidth,
+                  maxWidth: descWidth
+                }}
+              >
+                <div className="flex items-center justify-between gap-1 pr-1">
+                  <span className="truncate">Description</span>
+                  {freezeDescription && <Pin className="w-3 h-3 text-indigo-600 rotate-45 shrink-0" title="Frozen Pane" />}
+                </div>
+                <div
+                  onMouseDown={(e) => handleResizeStart('description', e)}
+                  onTouchStart={(e) => handleResizeStart('description', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Location Column */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.location, minWidth: columnWidths.location, maxWidth: columnWidths.location }}
+              >
+                <span className="truncate">Location</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('location', e)}
+                  onTouchStart={(e) => handleResizeStart('location', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Current Stock */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.currentStock, minWidth: columnWidths.currentStock, maxWidth: columnWidths.currentStock }}
+              >
+                <span className="truncate">Current Stock</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('currentStock', e)}
+                  onTouchStart={(e) => handleResizeStart('currentStock', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Min Qty */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.min_quantity, minWidth: columnWidths.min_quantity, maxWidth: columnWidths.min_quantity }}
+              >
+                <span className="truncate">Min Qty</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('min_quantity', e)}
+                  onTouchStart={(e) => handleResizeStart('min_quantity', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Reorder Level */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.reorder_level, minWidth: columnWidths.reorder_level, maxWidth: columnWidths.reorder_level }}
+              >
+                <span className="truncate">Reorder Level</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('reorder_level', e)}
+                  onTouchStart={(e) => handleResizeStart('reorder_level', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Max Qty */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.max_quantity, minWidth: columnWidths.max_quantity, maxWidth: columnWidths.max_quantity }}
+              >
+                <span className="truncate">Max Qty</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('max_quantity', e)}
+                  onTouchStart={(e) => handleResizeStart('max_quantity', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Monthly Usage */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.estimated_monthly_usage, minWidth: columnWidths.estimated_monthly_usage, maxWidth: columnWidths.estimated_monthly_usage }}
+              >
+                <span className="truncate">Monthly Usage</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('estimated_monthly_usage', e)}
+                  onTouchStart={(e) => handleResizeStart('estimated_monthly_usage', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Barcode */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.barcode, minWidth: columnWidths.barcode, maxWidth: columnWidths.barcode }}
+              >
+                <span className="truncate">Barcode</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('barcode', e)}
+                  onTouchStart={(e) => handleResizeStart('barcode', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Route */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.ordering_channel, minWidth: columnWidths.ordering_channel, maxWidth: columnWidths.ordering_channel }}
+              >
+                <span className="truncate">Route</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('ordering_channel', e)}
+                  onTouchStart={(e) => handleResizeStart('ordering_channel', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Lead Days */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.lead_time_days, minWidth: columnWidths.lead_time_days, maxWidth: columnWidths.lead_time_days }}
+              >
+                <span className="truncate">Lead Days</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('lead_time_days', e)}
+                  onTouchStart={(e) => handleResizeStart('lead_time_days', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Boxes/Pack */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.boxes_per_pack, minWidth: columnWidths.boxes_per_pack, maxWidth: columnWidths.boxes_per_pack }}
+              >
+                <span className="truncate">Boxes/Pack</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('boxes_per_pack', e)}
+                  onTouchStart={(e) => handleResizeStart('boxes_per_pack', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Units/Box */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.units_per_box, minWidth: columnWidths.units_per_box, maxWidth: columnWidths.units_per_box }}
+              >
+                <span className="truncate">Units/Box</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('units_per_box', e)}
+                  onTouchStart={(e) => handleResizeStart('units_per_box', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Unit Name */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.smallest_unit_name, minWidth: columnWidths.smallest_unit_name, maxWidth: columnWidths.smallest_unit_name }}
+              >
+                <span className="truncate">Unit Name</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('smallest_unit_name', e)}
+                  onTouchStart={(e) => handleResizeStart('smallest_unit_name', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Quantity Details */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.quantity_details, minWidth: columnWidths.quantity_details, maxWidth: columnWidths.quantity_details }}
+              >
+                <span className="truncate">Quantity Details</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('quantity_details', e)}
+                  onTouchStart={(e) => handleResizeStart('quantity_details', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Remarks */}
+              <th
+                className="p-2.5 border-r border-slate-200 bg-slate-100 relative group"
+                style={{ width: columnWidths.add_info, minWidth: columnWidths.add_info, maxWidth: columnWidths.add_info }}
+              >
+                <span className="truncate">Remarks / Add Info</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('add_info', e)}
+                  onTouchStart={(e) => handleResizeStart('add_info', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
+
+              {/* Actions */}
+              <th
+                className="p-2.5 text-right bg-slate-100 relative group"
+                style={{ width: columnWidths.actions, minWidth: columnWidths.actions, maxWidth: columnWidths.actions }}
+              >
+                <span className="truncate">Actions</span>
+                <div
+                  onMouseDown={(e) => handleResizeStart('actions', e)}
+                  onTouchStart={(e) => handleResizeStart('actions', e)}
+                  className="absolute top-0 right-0 h-full w-2 cursor-col-resize select-none hover:bg-emerald-500 z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Resize column"
+                />
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 text-xs font-mono">
@@ -314,17 +685,25 @@ export function ExcelStockGrid({
                   statusBadge = { bg: 'bg-amber-100 text-amber-800 border-amber-300', text: '🟡 LOW' };
                 }
 
+                // Explicit row background for seamless frozen column rendering
+                const rowBgClass = isModified
+                  ? 'bg-amber-50'
+                  : idx % 2 === 0
+                  ? 'bg-white'
+                  : 'bg-slate-50';
+
                 return (
                   <tr
                     key={article.article_number}
-                    className={`transition ${
-                      isModified
-                        ? 'bg-amber-50/70 hover:bg-amber-100/60 border-l-4 border-l-amber-500'
-                        : idx % 2 === 0 ? 'bg-white hover:bg-slate-50' : 'bg-slate-50/50 hover:bg-slate-100/70'
-                    }`}
+                    className={`transition ${rowBgClass} hover:bg-amber-100/60`}
                   >
                     {/* Checkbox */}
-                    <td className="p-2 border-r border-slate-200 text-center">
+                    <td
+                      className={`p-2 border-r border-slate-200 text-center ${rowBgClass} ${
+                        freezeDescription ? 'sticky left-0 z-20' : ''
+                      }`}
+                      style={{ width: checkboxWidth, minWidth: checkboxWidth, maxWidth: checkboxWidth }}
+                    >
                       <input
                         type="checkbox"
                         checked={selectedArticleNumbers.includes(article.article_number)}
@@ -339,55 +718,86 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Article # */}
-                    <td className="p-2 border-r border-slate-200 font-bold text-slate-800 select-none">
-                      <div className="flex items-center gap-1">
-                        <span>{article.article_number}</span>
-                        {isModified && <span className="text-[9px] bg-amber-500 text-slate-950 font-extrabold px-1 rounded">MOD</span>}
+                    <td
+                      className={`p-2 border-r border-slate-200 font-bold text-slate-800 select-none ${rowBgClass} ${
+                        freezeDescription ? 'sticky z-20' : ''
+                      }`}
+                      style={{
+                        left: freezeDescription ? articleLeft : undefined,
+                        width: articleWidth,
+                        minWidth: articleWidth,
+                        maxWidth: articleWidth
+                      }}
+                    >
+                      <div className="flex items-center gap-1 overflow-hidden">
+                        <span className="truncate">{article.article_number}</span>
+                        {isModified && <span className="text-[9px] bg-amber-500 text-slate-950 font-extrabold px-1 rounded shrink-0">MOD</span>}
                       </div>
                     </td>
 
-                    {/* Description */}
-                    <td className="p-1 border-r border-slate-200">
+                    {/* Description (Frozen Edge) */}
+                    <td
+                      className={`p-1 ${rowBgClass} ${
+                        freezeDescription
+                          ? 'sticky z-20 border-r-2 border-r-slate-300 shadow-[4px_0_10px_-2px_rgba(0,0,0,0.15)]'
+                          : 'border-r border-slate-200'
+                      }`}
+                      style={{
+                        left: freezeDescription ? descLeft : undefined,
+                        width: descWidth,
+                        minWidth: descWidth,
+                        maxWidth: descWidth
+                      }}
+                    >
                       <input
                         type="text"
                         value={desc || ''}
                         onChange={(e) => handleGridCellChange(article.article_number, 'description', e.target.value)}
                         onBlur={() => gridAutoSave && handleSaveGridRow(article)}
-                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-sans text-xs font-semibold text-slate-800 outline-none transition"
+                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-sans text-xs font-semibold text-slate-800 outline-none transition truncate"
                       />
                     </td>
 
                     {/* Location */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.location, minWidth: columnWidths.location, maxWidth: columnWidths.location }}
+                    >
                       <input
                         type="text"
                         list="grid-locations-list"
                         value={loc || ''}
                         onChange={(e) => handleGridCellChange(article.article_number, 'location', e.target.value.toUpperCase())}
                         onBlur={() => gridAutoSave && handleSaveGridRow(article)}
-                        className="w-full bg-indigo-50/50 hover:bg-indigo-50 focus:bg-white border border-indigo-100 hover:border-indigo-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded px-2 py-1 font-mono text-xs font-bold text-indigo-900 outline-none transition uppercase"
+                        className="w-full bg-indigo-50/50 hover:bg-indigo-50 focus:bg-white border border-indigo-100 hover:border-indigo-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded px-2 py-1 font-mono text-xs font-bold text-indigo-900 outline-none transition uppercase truncate"
                         placeholder="LOCATION..."
                       />
                     </td>
 
                     {/* Current Stock */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.currentStock, minWidth: columnWidths.currentStock, maxWidth: columnWidths.currentStock }}
+                    >
                       <div className="flex items-center gap-1">
                         <input
                           type="number"
                           value={stock ?? 0}
                           onChange={(e) => handleGridCellChange(article.article_number, 'currentStock', e.target.value)}
                           onBlur={() => gridAutoSave && handleSaveGridRow(article)}
-                          className="w-20 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-mono text-xs font-bold text-slate-900 outline-none text-right transition"
+                          className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-1.5 py-1 font-mono text-xs font-bold text-slate-900 outline-none text-right transition"
                         />
-                        <span className={`text-[9px] font-bold border px-1 py-0.5 rounded whitespace-nowrap ${statusBadge.bg}`}>
+                        <span className={`text-[9px] font-bold border px-1 py-0.5 rounded whitespace-nowrap shrink-0 ${statusBadge.bg}`}>
                           {statusBadge.text}
                         </span>
                       </div>
                     </td>
 
                     {/* Min Quantity */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.min_quantity, minWidth: columnWidths.min_quantity, maxWidth: columnWidths.min_quantity }}
+                    >
                       <input
                         type="number"
                         value={minQ ?? 0}
@@ -398,7 +808,10 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Reorder Level */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.reorder_level, minWidth: columnWidths.reorder_level, maxWidth: columnWidths.reorder_level }}
+                    >
                       <input
                         type="number"
                         value={reorder ?? 0}
@@ -409,7 +822,10 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Max Quantity */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.max_quantity, minWidth: columnWidths.max_quantity, maxWidth: columnWidths.max_quantity }}
+                    >
                       <input
                         type="number"
                         value={maxQ ?? 0}
@@ -420,7 +836,10 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Monthly Usage */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.estimated_monthly_usage, minWidth: columnWidths.estimated_monthly_usage, maxWidth: columnWidths.estimated_monthly_usage }}
+                    >
                       <input
                         type="number"
                         value={monthly ?? 0}
@@ -431,24 +850,30 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Barcode */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.barcode, minWidth: columnWidths.barcode, maxWidth: columnWidths.barcode }}
+                    >
                       <input
                         type="text"
                         value={code || ''}
                         onChange={(e) => handleGridCellChange(article.article_number, 'barcode', e.target.value)}
                         onBlur={() => gridAutoSave && handleSaveGridRow(article)}
-                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-mono text-xs text-slate-700 outline-none transition"
+                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-mono text-xs text-slate-700 outline-none transition truncate"
                       />
                     </td>
 
                     {/* Route */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.ordering_channel, minWidth: columnWidths.ordering_channel, maxWidth: columnWidths.ordering_channel }}
+                    >
                       <select
                         value={route || 'Central'}
                         onChange={(e) => {
                           handleGridCellChange(article.article_number, 'ordering_channel', e.target.value, true);
                         }}
-                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-[11px] font-bold text-slate-800 outline-none cursor-pointer"
+                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1 py-1 text-[11px] font-bold text-slate-800 outline-none cursor-pointer"
                       >
                         <option value="Central">Central Team</option>
                         <option value="Local">Local Purchase</option>
@@ -456,7 +881,10 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Lead Days */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.lead_time_days, minWidth: columnWidths.lead_time_days, maxWidth: columnWidths.lead_time_days }}
+                    >
                       <input
                         type="number"
                         value={lead ?? 0}
@@ -467,7 +895,10 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Boxes / Pack */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.boxes_per_pack, minWidth: columnWidths.boxes_per_pack, maxWidth: columnWidths.boxes_per_pack }}
+                    >
                       <input
                         type="number"
                         value={bpp ?? 0}
@@ -478,7 +909,10 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Units / Box */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.units_per_box, minWidth: columnWidths.units_per_box, maxWidth: columnWidths.units_per_box }}
+                    >
                       <input
                         type="number"
                         value={upb ?? 0}
@@ -489,42 +923,54 @@ export function ExcelStockGrid({
                     </td>
 
                     {/* Unit Name */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.smallest_unit_name, minWidth: columnWidths.smallest_unit_name, maxWidth: columnWidths.smallest_unit_name }}
+                    >
                       <input
                         type="text"
                         value={unitName || ''}
                         onChange={(e) => handleGridCellChange(article.article_number, 'smallest_unit_name', e.target.value)}
                         onBlur={() => gridAutoSave && handleSaveGridRow(article)}
-                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-sans text-xs text-slate-700 outline-none transition"
+                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-sans text-xs text-slate-700 outline-none transition truncate"
                       />
                     </td>
 
                     {/* Quantity Details */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.quantity_details, minWidth: columnWidths.quantity_details, maxWidth: columnWidths.quantity_details }}
+                    >
                       <input
                         type="text"
                         value={qtySpec || ''}
                         onChange={(e) => handleGridCellChange(article.article_number, 'quantity_details', e.target.value)}
                         onBlur={() => gridAutoSave && handleSaveGridRow(article)}
-                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-sans text-xs text-slate-700 outline-none transition"
+                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-sans text-xs text-slate-700 outline-none transition truncate"
                         placeholder="e.g. 5 boxes x 20 rolls..."
                       />
                     </td>
 
                     {/* Remarks */}
-                    <td className="p-1 border-r border-slate-200">
+                    <td
+                      className="p-1 border-r border-slate-200"
+                      style={{ width: columnWidths.add_info, minWidth: columnWidths.add_info, maxWidth: columnWidths.add_info }}
+                    >
                       <input
                         type="text"
                         value={addInfo || ''}
                         onChange={(e) => handleGridCellChange(article.article_number, 'add_info', e.target.value)}
                         onBlur={() => gridAutoSave && handleSaveGridRow(article)}
-                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-sans text-xs text-slate-700 outline-none transition"
+                        className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded px-2 py-1 font-sans text-xs text-slate-700 outline-none transition truncate"
                         placeholder="e.g. Recounted on Monday..."
                       />
                     </td>
 
                     {/* Row Actions */}
-                    <td className="p-2 text-right">
+                    <td
+                      className="p-2 text-right"
+                      style={{ width: columnWidths.actions, minWidth: columnWidths.actions, maxWidth: columnWidths.actions }}
+                    >
                       <div className="flex justify-end gap-1">
                         {isModified ? (
                           <>
@@ -567,6 +1013,11 @@ export function ExcelStockGrid({
               {Object.keys(gridEdits).length} unsaved row(s)
             </span>
           )}
+          {freezeDescription && (
+            <span className="text-slate-400 text-[11px] flex items-center gap-1">
+              <Pin className="w-3 h-3 text-indigo-400 rotate-45" /> Description Pane Frozen
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -597,3 +1048,4 @@ export function ExcelStockGrid({
     </div>
   );
 }
+
