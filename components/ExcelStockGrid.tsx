@@ -271,7 +271,7 @@ export function ExcelStockGrid({
               <th className="p-2.5 min-w-[80px] bg-slate-100 border-r border-slate-200">Boxes/Pack</th>
               <th className="p-2.5 min-w-[80px] bg-slate-100 border-r border-slate-200">Units/Box</th>
               <th className="p-2.5 min-w-[90px] bg-slate-100 border-r border-slate-200">Unit Name</th>
-              <th className="p-2.5 min-w-[180px] bg-slate-100 border-r border-slate-200">Packaging Spec</th>
+              <th className="p-2.5 min-w-[200px] bg-slate-100 border-r border-slate-200">Quantity Details</th>
               <th className="p-2.5 min-w-[180px] bg-slate-100 border-r border-slate-200">Remarks / Add Info</th>
               <th className="p-2.5 min-w-[100px] text-right bg-slate-100">Actions</th>
             </tr>
@@ -499,7 +499,7 @@ export function ExcelStockGrid({
                       />
                     </td>
 
-                    {/* Packaging Spec */}
+                    {/* Quantity Details */}
                     <td className="p-1 border-r border-slate-200">
                       <input
                         type="text"
