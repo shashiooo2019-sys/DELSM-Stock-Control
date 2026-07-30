@@ -383,11 +383,11 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
 
 export async function deleteStockMasterFromFirestore(articleNumber: string) {
   try {
-    if (typeof window !== 'undefined') {
-      const deleted = JSON.parse(localStorage.getItem('delhi_deleted_articles') || '[]');
-      if (!deleted.includes(articleNumber)) {
-        deleted.push(articleNumber);
-        localStorage.setItem('delhi_deleted_articles', JSON.stringify(deleted));
+    if (typeof window !== 'undefined' && !auth.currentUser) {
+      try {
+        await signInAnonymously(auth);
+      } catch (authErr) {
+        console.warn('Anonymous auth before Firestore delete failed:', authErr);
       }
     }
     const docRef = doc(firestoreDb, 'stockMaster', articleNumber);
@@ -399,6 +399,13 @@ export async function deleteStockMasterFromFirestore(articleNumber: string) {
 
 export async function saveStockLogToFirestore(log: StockTakingLog) {
   try {
+    if (typeof window !== 'undefined' && !auth.currentUser) {
+      try {
+        await signInAnonymously(auth);
+      } catch (authErr) {
+        console.warn('Anonymous auth before Firestore save log failed:', authErr);
+      }
+    }
     const cleanLog = sanitizeForFirestore(log);
     const docRef = doc(firestoreDb, 'stockTakingLogs', log.log_id);
     await setDoc(docRef, cleanLog, { merge: true });
@@ -409,6 +416,13 @@ export async function saveStockLogToFirestore(log: StockTakingLog) {
 
 export async function deleteStockLogFromFirestore(logId: string) {
   try {
+    if (typeof window !== 'undefined' && !auth.currentUser) {
+      try {
+        await signInAnonymously(auth);
+      } catch (authErr) {
+        console.warn('Anonymous auth before Firestore delete log failed:', authErr);
+      }
+    }
     const docRef = doc(firestoreDb, 'stockTakingLogs', logId);
     await deleteDoc(docRef);
   } catch (err) {
@@ -418,6 +432,13 @@ export async function deleteStockLogFromFirestore(logId: string) {
 
 export async function savePurchaseOrderToFirestore(po: PurchaseOrder) {
   try {
+    if (typeof window !== 'undefined' && !auth.currentUser) {
+      try {
+        await signInAnonymously(auth);
+      } catch (authErr) {
+        console.warn('Anonymous auth before Firestore save PO failed:', authErr);
+      }
+    }
     const cleanPo = sanitizeForFirestore(po);
     const docRef = doc(firestoreDb, 'purchaseOrders', po.po_number);
     await setDoc(docRef, cleanPo, { merge: true });
@@ -428,6 +449,13 @@ export async function savePurchaseOrderToFirestore(po: PurchaseOrder) {
 
 export async function deletePurchaseOrderFromFirestore(poNumber: string) {
   try {
+    if (typeof window !== 'undefined' && !auth.currentUser) {
+      try {
+        await signInAnonymously(auth);
+      } catch (authErr) {
+        console.warn('Anonymous auth before Firestore delete PO failed:', authErr);
+      }
+    }
     const docRef = doc(firestoreDb, 'purchaseOrders', poNumber);
     await deleteDoc(docRef);
   } catch (err) {
@@ -510,9 +538,10 @@ export function subscribeToDatabase(
         isFirestoreInitialized = true;
         if (typeof window !== 'undefined') localStorage.setItem('delhi_stock_initialized', 'true');
         seedInitialFirestoreData();
+        currentStockMaster = INITIAL_STOCK_MASTER;
+      } else {
+        currentStockMaster = [];
       }
-      const localDb = loadDatabase();
-      currentStockMaster = localDb.stockMaster.length > 0 ? localDb.stockMaster : INITIAL_STOCK_MASTER;
     } else {
       isFirestoreInitialized = true;
       if (typeof window !== 'undefined') localStorage.setItem('delhi_stock_initialized', 'true');
