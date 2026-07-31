@@ -674,7 +674,9 @@ export function subscribeToDatabase(
       currentStockMaster = firestoreItems;
     }
     notify();
-  }, (err) => handleFirestoreError(err, OperationType.GET, 'stockMaster'));
+  }, (err) => {
+    console.warn("Firestore stockMaster subscription error:", err);
+  });
 
   const unsubLogs = onSnapshot(collection(firestoreDb, 'stockTakingLogs'), (snapshot) => {
     if (snapshot.empty) {
@@ -690,7 +692,9 @@ export function subscribeToDatabase(
     if (stockMasterLoaded) {
       notify();
     }
-  }, (err) => handleFirestoreError(err, OperationType.GET, 'stockTakingLogs'));
+  }, (err) => {
+    console.warn("Firestore stockTakingLogs subscription error:", err);
+  });
 
   const unsubPOs = onSnapshot(collection(firestoreDb, 'purchaseOrders'), (snapshot) => {
     if (snapshot.empty) {
@@ -706,7 +710,9 @@ export function subscribeToDatabase(
     if (stockMasterLoaded) {
       notify();
     }
-  }, (err) => handleFirestoreError(err, OperationType.GET, 'purchaseOrders'));
+  }, (err) => {
+    console.warn("Firestore purchaseOrders subscription error:", err);
+  });
 
   return () => {
     unsubMeta();

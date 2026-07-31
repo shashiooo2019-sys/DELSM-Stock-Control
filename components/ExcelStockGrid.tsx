@@ -18,7 +18,9 @@ import {
   Pin,
   MoveHorizontal,
   Columns,
-  GripVertical
+  GripVertical,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { StockMaster } from '@/lib/db';
 
@@ -163,6 +165,51 @@ export function ExcelStockGrid({
   // Freeze Pane for Item Description Toggle
   const [freezeDescription, setFreezeDescription] = useState<boolean>(true);
   const [resizingCol, setResizingCol] = useState<string | null>(null);
+
+  // Grid Scroll Ref & Touch Swiping Gesture State
+  const gridContainerRef = React.useRef<HTMLDivElement>(null);
+  const touchStartX = React.useRef<number | null>(null);
+  const touchStartY = React.useRef<number | null>(null);
+  const scrollStartLeft = React.useRef<number>(0);
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+    if (targetTag === 'input' || targetTag === 'select' || targetTag === 'button') {
+      return;
+    }
+    if (e.touches.length === 1) {
+      touchStartX.current = e.touches[0].clientX;
+      touchStartY.current = e.touches[0].clientY;
+      if (gridContainerRef.current) {
+        scrollStartLeft.current = gridContainerRef.current.scrollLeft;
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (touchStartX.current !== null && touchStartY.current !== null && gridContainerRef.current) {
+      const currentX = e.touches[0].clientX;
+      const currentY = e.touches[0].clientY;
+      const deltaX = touchStartX.current - currentX;
+      const deltaY = touchStartY.current - currentY;
+
+      // If horizontal gesture is dominant, scroll horizontally
+      if (Math.abs(deltaX) > Math.abs(deltaY)) {
+        gridContainerRef.current.scrollLeft = scrollStartLeft.current + deltaX;
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartX.current = null;
+    touchStartY.current = null;
+  };
+
+  const scrollGridBy = (amount: number) => {
+    if (gridContainerRef.current) {
+      gridContainerRef.current.scrollBy({ left: amount, behavior: 'smooth' });
+    }
+  };
 
   // Drag & Drop Column Reordering State
   const [draggedCol, setDraggedCol] = useState<string | null>(null);
@@ -820,6 +867,31 @@ export function ExcelStockGrid({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {/* Horizontal Swipe & Scroll Helper Pill */}
+          <div className="flex items-center gap-1.5 bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold select-none shadow-2xs">
+            <MoveHorizontal className="w-4 h-4 text-amber-300 animate-pulse shrink-0" />
+            <span className="hidden sm:inline">Swipe left 👈 to scroll all columns</span>
+            <span className="sm:hidden">Swipe 👈 👉</span>
+            <div className="flex items-center gap-1 ml-1.5 border-l border-indigo-500/30 pl-2">
+              <button
+                type="button"
+                onClick={() => scrollGridBy(-300)}
+                className="p-1 hover:bg-white/20 active:bg-white/30 rounded transition cursor-pointer text-white"
+                title="Scroll columns left"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollGridBy(300)}
+                className="p-1 hover:bg-white/20 active:bg-white/30 rounded transition cursor-pointer text-white"
+                title="Scroll columns right (view all columns)"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
           {/* Freeze Pane Toggle */}
           <button
             onClick={() => setFreezeDescription(!freezeDescription)}
@@ -999,7 +1071,13 @@ export function ExcelStockGrid({
       )}
 
       {/* High Density Editable Excel Grid with Resizable Columns & Drag-Drop Reordering */}
-      <div className="overflow-x-auto max-h-[70vh] relative select-none">
+      <div
+        ref={gridContainerRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        className="overflow-x-auto max-h-[70vh] relative touch-pan-x overscroll-x-contain scrollbar-thin scroll-smooth"
+      >
         <table className="w-full text-left border-collapse border-spacing-0 table-fixed">
           <thead className="sticky top-0 z-30 bg-slate-100 text-slate-700 text-[11px] uppercase tracking-wider font-bold border-b border-slate-300 shadow-2xs">
             <tr>

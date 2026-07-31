@@ -26,8 +26,10 @@ import {
   Trash2,
   History,
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   ChevronUp,
+  MoveHorizontal,
   List,
   Sparkles,
   Clock,
@@ -312,6 +314,50 @@ export default function DelhiStationInventoryApp() {
     title: '',
     description: ''
   });
+
+  // Barcode Grid Scroll Ref & Touch Swipe Gesture Handlers
+  const barcodeGridScrollRef = useRef<HTMLDivElement>(null);
+  const barcodeTouchStartX = useRef<number | null>(null);
+  const barcodeTouchStartY = useRef<number | null>(null);
+  const barcodeScrollStartLeft = useRef<number>(0);
+
+  const handleBarcodeTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+    if (targetTag === 'input' || targetTag === 'select' || targetTag === 'button') {
+      return;
+    }
+    if (e.touches.length === 1) {
+      barcodeTouchStartX.current = e.touches[0].clientX;
+      barcodeTouchStartY.current = e.touches[0].clientY;
+      if (barcodeGridScrollRef.current) {
+        barcodeScrollStartLeft.current = barcodeGridScrollRef.current.scrollLeft;
+      }
+    }
+  };
+
+  const handleBarcodeTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (barcodeTouchStartX.current !== null && barcodeTouchStartY.current !== null && barcodeGridScrollRef.current) {
+      const currentX = e.touches[0].clientX;
+      const currentY = e.touches[0].clientY;
+      const deltaX = barcodeTouchStartX.current - currentX;
+      const deltaY = barcodeTouchStartY.current - currentY;
+
+      if (Math.abs(deltaX) > Math.abs(deltaY)) {
+        barcodeGridScrollRef.current.scrollLeft = barcodeScrollStartLeft.current + deltaX;
+      }
+    }
+  };
+
+  const handleBarcodeTouchEnd = () => {
+    barcodeTouchStartX.current = null;
+    barcodeTouchStartY.current = null;
+  };
+
+  const scrollBarcodeGridBy = (amount: number) => {
+    if (barcodeGridScrollRef.current) {
+      barcodeGridScrollRef.current.scrollBy({ left: amount, behavior: 'smooth' });
+    }
+  };
 
 
   // Save to LocalStorage whenever DB changes
@@ -4519,30 +4565,63 @@ export default function DelhiStationInventoryApp() {
                 </div>
               </div>
 
-              {/* Search Bar specifically for this Stocktaking grid */}
-              <div className="flex items-center gap-2 max-w-md">
-                <div className="relative flex-grow">
-                  <input
-                    type="text"
-                    placeholder="Search article, description, location..."
-                    value={scannerGridSearchQuery}
-                    onChange={(e) => setScannerGridSearchQuery(e.target.value)}
-                    className="w-full text-xs border border-slate-200 pl-8 pr-2.5 py-2 rounded-lg bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-slate-700"
-                  />
-                  <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+              {/* Search Bar & Horizontal Scroll Control specifically for this Stocktaking grid */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 max-w-md w-full sm:w-auto">
+                  <div className="relative flex-grow">
+                    <input
+                      type="text"
+                      placeholder="Search article, description, location..."
+                      value={scannerGridSearchQuery}
+                      onChange={(e) => setScannerGridSearchQuery(e.target.value)}
+                      className="w-full text-xs border border-slate-200 pl-8 pr-2.5 py-2 rounded-lg bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-slate-700"
+                    />
+                    <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+                  </div>
+                  {scannerGridSearchQuery && (
+                    <button
+                      onClick={() => setScannerGridSearchQuery('')}
+                      className="text-xs text-slate-500 hover:text-slate-800 underline px-2 py-1"
+                    >
+                      Clear
+                    </button>
+                  )}
                 </div>
-                {scannerGridSearchQuery && (
-                  <button
-                    onClick={() => setScannerGridSearchQuery('')}
-                    className="text-xs text-slate-500 hover:text-slate-800 underline px-2 py-1"
-                  >
-                    Clear
-                  </button>
-                )}
+
+                {/* Horizontal Swipe & Scroll Helper Badge */}
+                <div className="flex items-center gap-1.5 bg-amber-50 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-xl text-xs font-semibold select-none shadow-2xs">
+                  <MoveHorizontal className="w-4 h-4 text-amber-600 animate-pulse shrink-0" />
+                  <span className="hidden sm:inline">Swipe left 👈 to scroll all columns</span>
+                  <span className="sm:hidden">Swipe 👈 👉</span>
+                  <div className="flex items-center gap-1 ml-1.5 border-l border-amber-200 pl-2">
+                    <button
+                      type="button"
+                      onClick={() => scrollBarcodeGridBy(-250)}
+                      className="p-1 hover:bg-amber-100 active:bg-amber-200 rounded transition cursor-pointer text-amber-900"
+                      title="Scroll left"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => scrollBarcodeGridBy(250)}
+                      className="p-1 hover:bg-amber-100 active:bg-amber-200 rounded transition cursor-pointer text-amber-900"
+                      title="Scroll right to view all columns"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Table Container */}
-              <div className="overflow-x-auto border border-slate-100 rounded-xl">
+              <div
+                ref={barcodeGridScrollRef}
+                onTouchStart={handleBarcodeTouchStart}
+                onTouchMove={handleBarcodeTouchMove}
+                onTouchEnd={handleBarcodeTouchEnd}
+                className="overflow-x-auto border border-slate-100 rounded-xl touch-pan-x overscroll-x-contain scrollbar-thin scroll-smooth"
+              >
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold">
