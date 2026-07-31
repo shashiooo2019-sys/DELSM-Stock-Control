@@ -466,12 +466,38 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
         console.warn('Anonymous auth before Firestore save failed:', authErr);
       }
     }
+    // Clean and pick only the schema-defined fields for StockMaster document
+    const cleanFields: Partial<StockMaster> = {
+      article_number: item.article_number,
+      description: item.description,
+      barcode: item.barcode,
+      smallest_unit_name: item.smallest_unit_name,
+      units_per_box: Number(item.units_per_box) || 1,
+      boxes_per_pack: Number(item.boxes_per_pack) || 1,
+      estimated_monthly_usage: Number(item.estimated_monthly_usage) || 0,
+      min_quantity: Number(item.min_quantity) || 0,
+      reorder_level: Number(item.reorder_level) || 0,
+      max_quantity: Number(item.max_quantity) || 0,
+      total_stock_quantity: Number(item.total_stock_quantity) || 0,
+      order_frequency_days: Number(item.order_frequency_days) || 30,
+      order_volume: Number(item.order_volume) || 10,
+      ordering_channel: item.ordering_channel,
+      lead_time_days: Number(item.lead_time_days) || 5,
+    };
+
+    if (item.image_url !== undefined) cleanFields.image_url = item.image_url;
+    if (item.location !== undefined) cleanFields.location = item.location;
+    if (item.quantity_details !== undefined) cleanFields.quantity_details = item.quantity_details;
+    if (item.min_order_qty !== undefined) cleanFields.min_order_qty = item.min_order_qty;
+    if (item.add_info !== undefined) cleanFields.add_info = item.add_info;
+
     const cleanItem = sanitizeForFirestore({
-      ...item,
-      quantity_details: item.quantity_details ?? '',
-      min_order_qty: item.min_order_qty ?? '',
-      add_info: item.add_info ?? ''
+      ...cleanFields,
+      quantity_details: cleanFields.quantity_details ?? '',
+      min_order_qty: cleanFields.min_order_qty ?? '',
+      add_info: cleanFields.add_info ?? ''
     });
+
     const docRef = doc(firestoreDb, 'stockMaster', item.article_number);
     await setDoc(docRef, cleanItem, { merge: true });
   } catch (err) {

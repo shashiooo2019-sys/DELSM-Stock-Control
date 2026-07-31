@@ -120,7 +120,8 @@ export default function DelhiStationInventoryApp() {
   }>(loadDatabase());
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'master' | 'scanner' | 'orders' | 'analytics'>('dashboard');
-  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const [isSidebarVisible, setIsSidebarVisible] = useState(false);
+  const [isStockHeaderExpanded, setIsStockHeaderExpanded] = useState(false);
   
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => {
@@ -207,6 +208,7 @@ export default function DelhiStationInventoryApp() {
   
   // Search and view states
   const [searchQuery, setSearchQuery] = useState('');
+  const [scannerGridSearchQuery, setScannerGridSearchQuery] = useState('');
   const [channelFilter, setChannelFilter] = useState<'All' | 'Central' | 'Local'>('All');
   const [stockFilter, setStockFilter] = useState<'All' | 'Healthy' | 'Low' | 'Action Needed' | 'Suppressed' | 'Below Lead Days'>('All');
   const [locationFilter, setLocationFilter] = useState<string>('All');
@@ -498,7 +500,7 @@ export default function DelhiStationInventoryApp() {
   };
 
   // Save Physical Stock Count from Stocktaking Module
-  const handleSavePhysicalCount = () => {
+  const handleSavePhysicalCount = async () => {
     if (!scannedArticle) return;
 
     const totalCalculatedUnits = convertToSmallestUnits(
@@ -551,22 +553,29 @@ export default function DelhiStationInventoryApp() {
       return item;
     });
 
-    updateDb({
-      ...db,
-      stockMaster: updatedMaster,
-      stockTakingLog: [newLog, ...db.stockTakingLog]
-    });
+    try {
+      if (updatedArticle) {
+        // Priority updated to Firebase database
+        await saveStockMasterToFirestore(updatedArticle);
+      }
+      await saveStockLogToFirestore(newLog);
 
-    if (updatedArticle) {
-      saveStockMasterToFirestore(updatedArticle).catch(err => console.error("Firestore stockMaster update error:", err));
+      // Local state is updated only after Firestore success
+      updateDb({
+        ...db,
+        stockMaster: updatedMaster,
+        stockTakingLog: [newLog, ...db.stockTakingLog]
+      });
+
+      // Reset Scanner success screen
+      setScannerStatus('idle');
+      setScannedBarcode('');
+      setScannedArticle(null);
+      alert(`Successfully registered stock count of ${totalCalculatedUnits.toLocaleString()} ${scannedArticle.smallest_unit_name}(s) for ${scannedArticle.description}. Stock master and Firebase updated!`);
+    } catch (err: any) {
+      console.error("Firestore save error on physical count:", err);
+      alert(`Error saving stock count to Firebase: ${err.message || err}. Please check database connection.`);
     }
-    saveStockLogToFirestore(newLog).catch(err => console.error("Firestore stock log save error:", err));
-
-    // Reset Scanner success screen
-    setScannerStatus('idle');
-    setScannedBarcode('');
-    setScannedArticle(null);
-    alert(`Successfully registered stock count of ${totalCalculatedUnits.toLocaleString()} ${scannedArticle.smallest_unit_name}(s) for ${scannedArticle.description}. Stock master updated!`);
   };
 
   // ----------------------------------------------------
@@ -760,13 +769,17 @@ export default function DelhiStationInventoryApp() {
     const nextMaster = db.stockMaster.map(item =>
       item.article_number === article.article_number ? merged : item
     );
-    updateDb({ ...db, stockMaster: nextMaster, stockTakingLog: nextLogs });
 
     try {
+      // Prioritize saving to Firestore first
       await saveStockMasterToFirestore(merged);
       if (logToSave) {
         await saveStockLogToFirestore(logToSave);
       }
+
+      // Update local state only after successful Firestore save
+      updateDb({ ...db, stockMaster: nextMaster, stockTakingLog: nextLogs });
+
       setGridEdits(prev => {
         const copy = { ...prev };
         delete copy[article.article_number];
@@ -858,12 +871,14 @@ export default function DelhiStationInventoryApp() {
         }
       }
 
-      updateDb({ ...db, stockMaster: nextMaster, stockTakingLog: nextLogs });
-
+      // Prioritize saving to Firestore first
       await Promise.all([
         ...savedList.map(item => saveStockMasterToFirestore(item)),
         ...logsToSave.map(log => saveStockLogToFirestore(log))
       ]);
+
+      // Update local state only after successful Firestore save
+      updateDb({ ...db, stockMaster: nextMaster, stockTakingLog: nextLogs });
 
       setGridEdits({});
       playBeep();
@@ -1016,20 +1031,23 @@ export default function DelhiStationInventoryApp() {
       nextMaster.push(finalArticle);
     }
 
-    updateDb({
-      ...db,
-      stockMaster: nextMaster
-    });
-
     try {
+      // Prioritize saving to Firestore first
       await saveStockMasterToFirestore(finalArticle);
-    } catch (err) {
-      console.warn("Firestore save warning:", err);
+      
+      // Update local state only after successful Firestore save
+      updateDb({
+        ...db,
+        stockMaster: nextMaster
+      });
+      
+      setIsArticleModalOpen(false);
+      setEditingArticle(null);
+      playBeep();
+    } catch (err: any) {
+      console.error("Firestore save error on article:", err);
+      alert(`Error saving article to Firebase: ${err.message || err}. Please check database connection.`);
     }
-
-    setIsArticleModalOpen(false);
-    setEditingArticle(null);
-    playBeep();
   };
 
   // ----------------------------------------------------
@@ -1934,7 +1952,10 @@ export default function DelhiStationInventoryApp() {
             </div>
             
             <button
-              onClick={() => setActiveTab('dashboard')}
+              onClick={() => {
+                setActiveTab('dashboard');
+                setIsSidebarVisible(false);
+              }}
               className={`flex items-center gap-3 px-4 py-3 rounded-md border text-xs font-bold transition-all duration-150 justify-between ${
                 activeTab === 'dashboard'
                   ? 'bg-white border-slate-300 shadow-sm text-slate-900'
@@ -1953,7 +1974,10 @@ export default function DelhiStationInventoryApp() {
             </button>
 
             <button
-              onClick={() => setActiveTab('master')}
+              onClick={() => {
+                setActiveTab('master');
+                setIsSidebarVisible(false);
+              }}
               className={`flex items-center gap-3 px-4 py-3 rounded-md border text-xs font-bold transition-all duration-150 ${
                 activeTab === 'master'
                   ? 'bg-white border-slate-300 shadow-sm text-slate-900'
@@ -1965,7 +1989,10 @@ export default function DelhiStationInventoryApp() {
             </button>
 
             <button
-              onClick={() => setActiveTab('scanner')}
+              onClick={() => {
+                setActiveTab('scanner');
+                setIsSidebarVisible(false);
+              }}
               className={`flex items-center gap-3 px-4 py-3 rounded-md border text-xs font-bold transition-all duration-150 ${
                 activeTab === 'scanner'
                   ? 'bg-white border-slate-300 shadow-sm text-slate-900'
@@ -1977,7 +2004,10 @@ export default function DelhiStationInventoryApp() {
             </button>
 
             <button
-              onClick={() => setActiveTab('orders')}
+              onClick={() => {
+                setActiveTab('orders');
+                setIsSidebarVisible(false);
+              }}
               className={`flex items-center gap-3 px-4 py-3 rounded-md border text-xs font-bold transition-all duration-150 ${
                 activeTab === 'orders'
                   ? 'bg-white border-slate-300 shadow-sm text-slate-900'
@@ -1989,7 +2019,10 @@ export default function DelhiStationInventoryApp() {
             </button>
 
             <button
-              onClick={() => setActiveTab('analytics')}
+              onClick={() => {
+                setActiveTab('analytics');
+                setIsSidebarVisible(false);
+              }}
               className={`flex items-center gap-3 px-4 py-3 rounded-md border text-xs font-bold transition-all duration-150 ${
                 activeTab === 'analytics'
                   ? 'bg-white border-slate-300 shadow-sm text-slate-900'
@@ -2003,7 +2036,10 @@ export default function DelhiStationInventoryApp() {
             <div className="my-1 border-t border-slate-200"></div>
 
             <button
-              onClick={() => setIsGoogleWorkspaceModalOpen(true)}
+              onClick={() => {
+                setIsGoogleWorkspaceModalOpen(true);
+                setIsSidebarVisible(false);
+              }}
               className="flex items-center gap-3 px-4 py-3 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 text-xs font-bold transition-all duration-150 shadow-2xs"
             >
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -3102,94 +3138,143 @@ export default function DelhiStationInventoryApp() {
         {/* TAB 2: MASTER STOCK MANAGEMENT */}
         {activeTab === 'master' && (
           <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">Delhi Station Master Stock</h2>
-                <p className="text-xs text-slate-500">Add, edit, and define unit conversions and thresholds for inventory parts.</p>
-              </div>
-              <div className="flex gap-2.5 self-start flex-wrap">
-                <button
-                  onClick={() => setIsBarcodeTagsModalOpen(true)}
-                  className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer focus:outline-none"
-                  title="Generate and print barcode tags for all inventory items"
-                >
-                  <Barcode className="w-4 h-4" /> Generate Bar Codes
-                </button>
-                <button
-                  onClick={handleExportToExcel}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5"
-                  title="Export currently filtered table dataset to Excel / CSV"
-                >
-                  <FileSpreadsheet className="w-4 h-4" /> Export to Excel
-                </button>
-                <button
-                  onClick={() => setIsGoogleWorkspaceModalOpen(true)}
-                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer focus:outline-none"
-                  title="Export to Google Sheets or Backup to Google Drive"
-                >
-                  <FileSpreadsheet className="w-4 h-4" /> Google Sheets / Drive Sync
-                </button>
-                {selectedArticleNumbers.length > 0 && currentUser?.role === 'admin' && (
-                  <button 
-                    onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        console.log("Delete button clicked, selected items:", selectedArticleNumbers);
-                        console.log("Current user:", currentUser);
-                        setConfirmDeleteModal({
-                          isOpen: true,
-                          type: 'bulk-articles',
-                          id: '',
-                          title: 'Delete Selected Articles',
-                          description: `Are you sure you want to delete ${selectedArticleNumbers.length} selected articles? This will permanently remove their master specifications, shelf locations, stocktaking logs, and purchase orders.`
-                        });
-                    }}
-                    className="bg-red-600 hover:bg-red-700 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer focus:outline-none"
-                  >
-                    <Trash2 className="w-4 h-4" /> Delete Selected ({selectedArticleNumbers.length})
-                  </button>
-                )}
-                {selectedArticleNumbers.length === 1 && currentUser?.role === 'admin' && (
-                  <button
-                    onClick={() => {
-                        const article = db.stockMaster.find(m => m.article_number === selectedArticleNumbers[0]);
-                        if(article) handleOpenEditModal(article);
-                    }}
-                    className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5"
-                  >
-                    <Edit2 className="w-4 h-4" /> Edit Selected
-                  </button>
-                )}
-                {currentUser?.role === 'admin' && (
-                  <>
-                    <button
-                      onClick={() => setStockViewMode(stockViewMode === 'gridEdit' ? 'table' : 'gridEdit')}
-                      className={`font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer ${
-                        stockViewMode === 'gridEdit'
-                          ? 'bg-slate-800 hover:bg-slate-900 text-white'
-                          : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                      }`}
-                      title="Toggle Excel Spreadsheet Style Quick Grid Edit Mode"
-                    >
-                      <TableProperties className="w-4 h-4" />
-                      <span>{stockViewMode === 'gridEdit' ? 'Exit Grid Mode' : 'Edit in Grid View'}</span>
-                    </button>
+            
+            {/* COLLAPSIBLE HEADER SECTION: DELHI STATION STOCK */}
+            <div id="delhi-station-stock-collapsible" className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden transition-all duration-200">
+              {/* Header bar / Summary bar with Three Bars (Menu) toggle */}
+              <div 
+                onClick={() => setIsStockHeaderExpanded(!isStockHeaderExpanded)}
+                className="flex items-center justify-between px-5 py-4 bg-slate-50 border-b border-slate-100 cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 bg-orange-100 rounded-lg text-orange-600">
+                    <Package className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                      Delhi Station Stock
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      {isStockHeaderExpanded ? "Click to collapse stock management controls" : "Click three bars to expand buttons & management controls"}
+                    </p>
+                  </div>
+                </div>
 
-                    <button
-                      onClick={() => setIsExcelImportModalOpen(true)}
-                      className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <FileSpreadsheet className="w-4 h-4" /> Import from Excel
-                    </button>
-                    <button
-                      onClick={handleOpenAddModal}
-                      className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm px-4 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" /> Add Master Item
-                    </button>
-                  </>
-                )}
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] font-bold bg-slate-200/80 text-slate-700 px-2.5 py-1 rounded-full">
+                    {filteredArticles.length} Master Items
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsStockHeaderExpanded(!isStockHeaderExpanded);
+                    }}
+                    className="p-2 bg-white hover:bg-slate-200 border border-slate-200 rounded-lg text-slate-700 hover:text-slate-900 transition shadow-sm focus:outline-none flex items-center gap-1 cursor-pointer"
+                    title={isStockHeaderExpanded ? "Collapse Delhi Station Stock section" : "Expand Delhi Station Stock section"}
+                  >
+                    <Menu className={`w-4.5 h-4.5 text-orange-500 transition-transform duration-200 ${isStockHeaderExpanded ? 'rotate-90' : ''}`} />
+                    <span className="text-[11px] font-bold hidden sm:inline">
+                      {isStockHeaderExpanded ? "Collapse" : "Expand"}
+                    </span>
+                  </button>
+                </div>
               </div>
+
+              {/* Expandable Panel */}
+              {isStockHeaderExpanded && (
+                <div className="p-5 bg-white border-t border-slate-100 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">Delhi Station Master Stock Controls</h3>
+                      <p className="text-xs text-slate-500">Add, edit, and define unit conversions and thresholds for inventory parts.</p>
+                    </div>
+                    <div className="flex gap-2.5 self-start flex-wrap">
+                      <button
+                        onClick={() => setIsBarcodeTagsModalOpen(true)}
+                        className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs px-3.5 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer focus:outline-none"
+                        title="Generate and print barcode tags for all inventory items"
+                      >
+                        <Barcode className="w-3.5 h-3.5" /> Generate Bar Codes
+                      </button>
+                      <button
+                        onClick={handleExportToExcel}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5"
+                        title="Export currently filtered table dataset to Excel / CSV"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" /> Export to Excel
+                      </button>
+                      <button
+                        onClick={() => setIsGoogleWorkspaceModalOpen(true)}
+                        className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs px-3.5 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer focus:outline-none"
+                        title="Export to Google Sheets or Backup to Google Drive"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" /> Google Sheets / Drive Sync
+                      </button>
+                      {selectedArticleNumbers.length > 0 && currentUser?.role === 'admin' && (
+                        <button 
+                          onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              console.log("Delete button clicked, selected items:", selectedArticleNumbers);
+                              console.log("Current user:", currentUser);
+                              setConfirmDeleteModal({
+                                isOpen: true,
+                                type: 'bulk-articles',
+                                id: '',
+                                title: 'Delete Selected Articles',
+                                description: `Are you sure you want to delete ${selectedArticleNumbers.length} selected articles? This will permanently remove their master specifications, shelf locations, stocktaking logs, and purchase orders.`
+                              });
+                          }}
+                          className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-3.5 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer focus:outline-none"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Delete Selected ({selectedArticleNumbers.length})
+                        </button>
+                      )}
+                      {selectedArticleNumbers.length === 1 && currentUser?.role === 'admin' && (
+                        <button
+                          onClick={() => {
+                              const article = db.stockMaster.find(m => m.article_number === selectedArticleNumbers[0]);
+                              if(article) handleOpenEditModal(article);
+                          }}
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs px-3.5 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" /> Edit Selected
+                        </button>
+                      )}
+                      {currentUser?.role === 'admin' && (
+                        <>
+                          <button
+                            onClick={() => setStockViewMode(stockViewMode === 'gridEdit' ? 'table' : 'gridEdit')}
+                            className={`font-bold text-xs px-3.5 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer ${
+                              stockViewMode === 'gridEdit'
+                                ? 'bg-slate-800 hover:bg-slate-900 text-white'
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                            }`}
+                            title="Toggle Excel Spreadsheet Style Quick Grid Edit Mode"
+                          >
+                            <TableProperties className="w-3.5 h-3.5" />
+                            <span>{stockViewMode === 'gridEdit' ? 'Exit Grid Mode' : 'Edit in Grid View'}</span>
+                          </button>
+
+                          <button
+                            onClick={() => setIsExcelImportModalOpen(true)}
+                            className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-3.5 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <FileSpreadsheet className="w-3.5 h-3.5" /> Import from Excel
+                          </button>
+                          <button
+                            onClick={handleOpenAddModal}
+                            className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs px-3.5 py-2 rounded-lg transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add Master Item
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Filters panel */}
@@ -3868,7 +3953,8 @@ export default function DelhiStationInventoryApp() {
 
         {/* TAB 3: BARCODE STOCKTAKING MODULE */}
         {activeTab === 'scanner' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
             {/* Left Col: Camera Scanner view finder */}
             <div className="lg:col-span-5 space-y-4">
@@ -4365,7 +4451,232 @@ export default function DelhiStationInventoryApp() {
                 </div>
               </div>
             </div>
+          </div>
 
+            {/* EDIT GRID MODE STOCK TABLE SECTION */}
+            <div id="barcode-edit-grid-section" className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <FileSpreadsheet className="w-5 h-5 text-amber-500" /> Barcode Stocktaking Edit Grid Mode
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Directly update current stock, description, location, or packaging specs. Any update is recorded as of the simulation date (<strong className="text-amber-600 font-mono">{simulatedDate}</strong>) and thereafter extrapolated as per daily burn rate.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={gridAutoSave}
+                      onChange={(e) => setGridAutoSave(e.target.checked)}
+                      className="accent-amber-500 rounded cursor-pointer"
+                    />
+                    <span className="font-bold">Auto-Sync on Leave</span>
+                  </label>
+                  
+                  {Object.keys(gridEdits).length > 0 && (
+                    <button
+                      onClick={handleSaveAllGridEdits}
+                      disabled={isBatchSavingGrid}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                    >
+                      {isBatchSavingGrid ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Save className="w-3.5 h-3.5" />
+                      )}
+                      <span>Save All ({Object.keys(gridEdits).length})</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Search Bar specifically for this Stocktaking grid */}
+              <div className="flex items-center gap-2 max-w-md">
+                <div className="relative flex-grow">
+                  <input
+                    type="text"
+                    placeholder="Search article, description, location..."
+                    value={scannerGridSearchQuery}
+                    onChange={(e) => setScannerGridSearchQuery(e.target.value)}
+                    className="w-full text-xs border border-slate-200 pl-8 pr-2.5 py-2 rounded-lg bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-slate-700"
+                  />
+                  <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+                </div>
+                {scannerGridSearchQuery && (
+                  <button
+                    onClick={() => setScannerGridSearchQuery('')}
+                    className="text-xs text-slate-500 hover:text-slate-800 underline px-2 py-1"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {/* Table Container */}
+              <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold">
+                      <th className="p-3 w-[120px]">Article #</th>
+                      <th className="p-3 min-w-[200px]">Description</th>
+                      <th className="p-3 w-[130px]">Location</th>
+                      <th className="p-3 min-w-[200px]">Quantity Details</th>
+                      <th className="p-3 w-[160px]">Current Stock (Units)</th>
+                      <th className="p-3 w-[110px] text-right">Daily Burn</th>
+                      <th className="p-3 min-w-[150px] text-right">Extrapolated Status</th>
+                      <th className="p-3 w-[90px] text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {(() => {
+                      const filtered = evaluatedArticles.filter(article => {
+                        const query = scannerGridSearchQuery.toLowerCase();
+                        return (
+                          (article.description || '').toLowerCase().includes(query) ||
+                          (article.article_number || '').toLowerCase().includes(query) ||
+                          (article.location || '').toLowerCase().includes(query) ||
+                          (article.barcode || '').toLowerCase().includes(query)
+                        );
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={8} className="p-8 text-center text-slate-400">
+                              No matching items found for &quot;{scannerGridSearchQuery}&quot;.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return filtered.map(article => {
+                        const rowEdit = gridEdits[article.article_number] || {};
+                        const isModified = Object.keys(rowEdit).length > 0;
+                        
+                        const desc = rowEdit.description !== undefined ? rowEdit.description : article.description;
+                        const loc = rowEdit.location !== undefined ? rowEdit.location : article.location;
+                        const qtySpec = rowEdit.quantity_details !== undefined ? rowEdit.quantity_details : article.quantity_details;
+                        const stock = rowEdit.currentStock !== undefined ? rowEdit.currentStock : article.currentStock;
+
+                        // Dynamic cover cover
+                        const daysCover = article.dailyBurn > 0 ? (stock || 0) / article.dailyBurn : 999;
+                        const isBelowLead = article.dailyBurn > 0 && daysCover <= (article.lead_time_days || 0);
+
+                        return (
+                          <tr key={article.article_number} className="hover:bg-slate-50/50 transition">
+                            <td className="p-3 font-mono font-bold text-slate-900">
+                              <div className="flex items-center gap-1">
+                                <span>{article.article_number}</span>
+                                {isModified && (
+                                  <span className="text-[9px] bg-amber-500 text-slate-950 font-extrabold px-1 rounded">MOD</span>
+                                )}
+                              </div>
+                            </td>
+
+                            <td className="p-3">
+                              <input
+                                type="text"
+                                value={desc || ''}
+                                onChange={(e) => handleGridCellChange(article.article_number, 'description', e.target.value)}
+                                onBlur={() => gridAutoSave && handleSaveGridRow(article)}
+                                className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-200/20 rounded px-2 py-1 font-sans text-xs font-semibold text-slate-800 outline-none transition truncate"
+                              />
+                            </td>
+
+                            <td className="p-3">
+                              <input
+                                type="text"
+                                list="scanner-grid-locations"
+                                value={loc || ''}
+                                onChange={(e) => handleGridCellChange(article.article_number, 'location', e.target.value.toUpperCase())}
+                                onBlur={() => gridAutoSave && handleSaveGridRow(article)}
+                                className="w-full bg-indigo-50/30 hover:bg-indigo-50 focus:bg-white border border-transparent hover:border-indigo-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200/20 rounded px-2 py-1 font-mono text-xs font-bold text-indigo-900 outline-none transition uppercase truncate"
+                                placeholder="LOCATION..."
+                              />
+                              <datalist id="scanner-grid-locations">
+                                {uniqueLocations.map(l => (
+                                  <option key={l} value={l} />
+                                ))}
+                              </datalist>
+                            </td>
+
+                            <td className="p-3">
+                              <input
+                                type="text"
+                                value={qtySpec || ''}
+                                onChange={(e) => handleGridCellChange(article.article_number, 'quantity_details', e.target.value)}
+                                onBlur={() => gridAutoSave && handleSaveGridRow(article)}
+                                className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-200/20 rounded px-2 py-1 font-sans text-xs text-slate-700 outline-none transition truncate"
+                                placeholder="e.g. 5 boxes x 20 rolls..."
+                              />
+                            </td>
+
+                            <td className="p-3">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="number"
+                                  value={stock ?? 0}
+                                  onChange={(e) => handleGridCellChange(article.article_number, 'currentStock', e.target.value)}
+                                  onBlur={() => gridAutoSave && handleSaveGridRow(article)}
+                                  className="w-20 bg-amber-50/30 hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-200/20 rounded px-2 py-1 font-mono text-xs font-bold text-slate-900 outline-none text-right transition"
+                                />
+                                <span className="text-[10px] text-slate-400 font-medium">{article.smallest_unit_name}s</span>
+                              </div>
+                            </td>
+
+                            <td className="p-3 text-right font-mono text-slate-600">
+                              {article.dailyBurn > 0 ? `${article.dailyBurn.toFixed(1)}/day` : '0/day'}
+                            </td>
+
+                            <td className="p-3 text-right">
+                              {article.dailyBurn > 0 ? (
+                                <div className="flex flex-col items-end">
+                                  <span className={`font-mono font-bold text-xs ${
+                                    isBelowLead ? 'text-red-600 animate-pulse' : 'text-slate-800'
+                                  }`}>
+                                    {daysCover.toFixed(1)} Days left
+                                  </span>
+                                  <span className="text-[9px] text-slate-400">
+                                    {isBelowLead ? `🚨 Risk (Lead: ${article.lead_time_days}d)` : 'Healthy Cover'}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-slate-400 font-mono italic">∞ No usage</span>
+                              )}
+                            </td>
+
+                            <td className="p-3 text-right">
+                              {isModified ? (
+                                <div className="flex justify-end gap-1">
+                                  <button
+                                    onClick={() => handleSaveGridRow(article)}
+                                    className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition shadow-sm cursor-pointer"
+                                    title="Save changes to Firestore & record recount log"
+                                  >
+                                    <Save className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDiscardGridRow(article.article_number)}
+                                    className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition cursor-pointer"
+                                    title="Discard unsaved changes for this row"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 select-none bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded font-bold uppercase">Saved</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
 
