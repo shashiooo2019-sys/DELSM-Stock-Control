@@ -455,6 +455,12 @@ export function sanitizeForFirestore<T extends object>(obj: T): Record<string, a
   return clean;
 }
 
+// Helper to sanitize Firestore document IDs (slashes / in IDs create unwanted subcollections)
+export function safeDocId(id: string): string {
+  if (!id) return 'id_' + Math.random().toString(36).substring(2, 9);
+  return encodeURIComponent(id).replace(/\./g, '%2E');
+}
+
 // Firestore Realtime Synchronization and Persistent Operations
 
 export async function saveStockMasterToFirestore(item: StockMaster) {
@@ -466,22 +472,30 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
         console.warn('Anonymous auth before Firestore save failed:', authErr);
       }
     }
+
+    const totalQty = (item.total_stock_quantity !== undefined && item.total_stock_quantity !== null && !isNaN(Number(item.total_stock_quantity)))
+      ? Number(item.total_stock_quantity)
+      : (item.currentStock !== undefined && item.currentStock !== null && !isNaN(Number(item.currentStock)))
+        ? Number(item.currentStock)
+        : 0;
+
     // Clean and pick only the schema-defined fields for StockMaster document
     const cleanFields: Partial<StockMaster> = {
       article_number: item.article_number,
       description: item.description,
-      barcode: item.barcode,
-      smallest_unit_name: item.smallest_unit_name,
+      barcode: item.barcode || '',
+      smallest_unit_name: item.smallest_unit_name || 'Piece',
       units_per_box: Number(item.units_per_box) || 1,
       boxes_per_pack: Number(item.boxes_per_pack) || 1,
       estimated_monthly_usage: Number(item.estimated_monthly_usage) || 0,
       min_quantity: Number(item.min_quantity) || 0,
       reorder_level: Number(item.reorder_level) || 0,
       max_quantity: Number(item.max_quantity) || 0,
-      total_stock_quantity: Number(item.total_stock_quantity) || 0,
+      total_stock_quantity: totalQty,
+      currentStock: totalQty,
       order_frequency_days: Number(item.order_frequency_days) || 30,
       order_volume: Number(item.order_volume) || 10,
-      ordering_channel: item.ordering_channel,
+      ordering_channel: item.ordering_channel || 'Local',
       lead_time_days: Number(item.lead_time_days) || 5,
     };
 
@@ -498,7 +512,7 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
       add_info: cleanFields.add_info ?? ''
     });
 
-    const docRef = doc(firestoreDb, 'stockMaster', item.article_number);
+    const docRef = doc(firestoreDb, 'stockMaster', safeDocId(item.article_number));
     await setDoc(docRef, cleanItem, { merge: true });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'stockMaster/' + item.article_number);
@@ -514,7 +528,7 @@ export async function deleteStockMasterFromFirestore(articleNumber: string) {
         console.warn('Anonymous auth before Firestore delete failed:', authErr);
       }
     }
-    const docRef = doc(firestoreDb, 'stockMaster', articleNumber);
+    const docRef = doc(firestoreDb, 'stockMaster', safeDocId(articleNumber));
     await deleteDoc(docRef);
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, 'stockMaster/' + articleNumber);
@@ -531,7 +545,7 @@ export async function saveStockLogToFirestore(log: StockTakingLog) {
       }
     }
     const cleanLog = sanitizeForFirestore(log);
-    const docRef = doc(firestoreDb, 'stockTakingLogs', log.log_id);
+    const docRef = doc(firestoreDb, 'stockTakingLogs', safeDocId(log.log_id));
     await setDoc(docRef, cleanLog, { merge: true });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'stockTakingLogs/' + log.log_id);
@@ -547,7 +561,7 @@ export async function deleteStockLogFromFirestore(logId: string) {
         console.warn('Anonymous auth before Firestore delete log failed:', authErr);
       }
     }
-    const docRef = doc(firestoreDb, 'stockTakingLogs', logId);
+    const docRef = doc(firestoreDb, 'stockTakingLogs', safeDocId(logId));
     await deleteDoc(docRef);
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, 'stockTakingLogs/' + logId);
@@ -564,7 +578,7 @@ export async function savePurchaseOrderToFirestore(po: PurchaseOrder) {
       }
     }
     const cleanPo = sanitizeForFirestore(po);
-    const docRef = doc(firestoreDb, 'purchaseOrders', po.po_number);
+    const docRef = doc(firestoreDb, 'purchaseOrders', safeDocId(po.po_number));
     await setDoc(docRef, cleanPo, { merge: true });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'purchaseOrders/' + po.po_number);
@@ -580,36 +594,40 @@ export async function deletePurchaseOrderFromFirestore(poNumber: string) {
         console.warn('Anonymous auth before Firestore delete PO failed:', authErr);
       }
     }
-    const docRef = doc(firestoreDb, 'purchaseOrders', poNumber);
+    const docRef = doc(firestoreDb, 'purchaseOrders', safeDocId(poNumber));
     await deleteDoc(docRef);
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, 'purchaseOrders/' + poNumber);
   }
 }
 
-export async function seedInitialFirestoreData() {
+export async function seedInitialFirestoreData(customMaster?: StockMaster[]) {
   try {
     if (typeof window !== 'undefined') {
       localStorage.setItem('delhi_stock_initialized', 'true');
     }
     const batch = writeBatch(firestoreDb);
     batch.set(doc(firestoreDb, 'appMeta', 'init'), { initialized: true });
-    INITIAL_STOCK_MASTER.forEach(item => {
-      const ref = doc(firestoreDb, 'stockMaster', item.article_number);
+    
+    const masterList = customMaster && customMaster.length > 0 ? customMaster : INITIAL_STOCK_MASTER;
+    masterList.forEach(item => {
+      const ref = doc(firestoreDb, 'stockMaster', safeDocId(item.article_number));
       const cleanItem = sanitizeForFirestore({
         ...item,
         quantity_details: item.quantity_details ?? '',
         min_order_qty: item.min_order_qty ?? '',
-        add_info: item.add_info ?? ''
+        add_info: item.add_info ?? '',
+        total_stock_quantity: item.total_stock_quantity ?? item.currentStock ?? 0,
+        currentStock: item.total_stock_quantity ?? item.currentStock ?? 0
       });
       batch.set(ref, cleanItem);
     });
     INITIAL_STOCK_TAKING_LOG.forEach(log => {
-      const ref = doc(firestoreDb, 'stockTakingLogs', log.log_id);
+      const ref = doc(firestoreDb, 'stockTakingLogs', safeDocId(log.log_id));
       batch.set(ref, sanitizeForFirestore(log));
     });
     INITIAL_PURCHASE_ORDERS.forEach(po => {
-      const ref = doc(firestoreDb, 'purchaseOrders', po.po_number);
+      const ref = doc(firestoreDb, 'purchaseOrders', safeDocId(po.po_number));
       batch.set(ref, sanitizeForFirestore(po));
     });
     await batch.commit();
@@ -632,7 +650,7 @@ export function subscribeToDatabase(
   let currentPOs: PurchaseOrder[] = initialLocal.purchaseOrders;
 
   let stockMasterLoaded = false;
-  let isFirestoreInitialized = typeof window !== 'undefined' && localStorage.getItem('delhi_stock_initialized') === 'true';
+  let isFirestoreInitialized = typeof window !== 'undefined' && localStorage.setItem('delhi_stock_initialized', 'true') !== undefined;
 
   const unsubMeta = onSnapshot(doc(firestoreDb, 'appMeta', 'init'), (docSnap) => {
     if (docSnap.exists()) {
@@ -662,15 +680,34 @@ export function subscribeToDatabase(
       if (!isFirestoreInitialized) {
         isFirestoreInitialized = true;
         if (typeof window !== 'undefined') localStorage.setItem('delhi_stock_initialized', 'true');
-        seedInitialFirestoreData();
-        currentStockMaster = INITIAL_STOCK_MASTER;
+        const initialMaster = initialLocal.stockMaster.length > 0 ? initialLocal.stockMaster : INITIAL_STOCK_MASTER;
+        seedInitialFirestoreData(initialMaster);
+        currentStockMaster = initialMaster;
       } else {
-        currentStockMaster = [];
+        if (initialLocal.stockMaster.length > 0) {
+          console.log("Firestore stockMaster is empty, backfilling from local storage items...");
+          seedInitialFirestoreData(initialLocal.stockMaster);
+          currentStockMaster = initialLocal.stockMaster;
+        } else {
+          currentStockMaster = [];
+        }
       }
     } else {
       isFirestoreInitialized = true;
       if (typeof window !== 'undefined') localStorage.setItem('delhi_stock_initialized', 'true');
-      const firestoreItems = snapshot.docs.map(d => d.data() as StockMaster);
+      const firestoreItems = snapshot.docs.map(d => {
+        const data = d.data() as StockMaster;
+        const stock = (data.total_stock_quantity !== undefined && data.total_stock_quantity !== null && !isNaN(Number(data.total_stock_quantity)))
+          ? Number(data.total_stock_quantity)
+          : (data.currentStock !== undefined && data.currentStock !== null && !isNaN(Number(data.currentStock)))
+            ? Number(data.currentStock)
+            : 0;
+        return {
+          ...data,
+          total_stock_quantity: stock,
+          currentStock: stock
+        };
+      });
       currentStockMaster = firestoreItems;
     }
     notify();
@@ -683,7 +720,7 @@ export function subscribeToDatabase(
       if (!isFirestoreInitialized) {
         currentLogs = INITIAL_STOCK_TAKING_LOG;
       } else {
-        currentLogs = [];
+        currentLogs = initialLocal.stockTakingLog.length > 0 ? initialLocal.stockTakingLog : [];
       }
     } else {
       const firestoreLogs = snapshot.docs.map(d => d.data() as StockTakingLog);
@@ -701,7 +738,7 @@ export function subscribeToDatabase(
       if (!isFirestoreInitialized) {
         currentPOs = INITIAL_PURCHASE_ORDERS;
       } else {
-        currentPOs = [];
+        currentPOs = initialLocal.purchaseOrders.length > 0 ? initialLocal.purchaseOrders : [];
       }
     } else {
       const firestorePOs = snapshot.docs.map(d => d.data() as PurchaseOrder);

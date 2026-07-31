@@ -5270,7 +5270,7 @@ export default function DelhiStationInventoryApp() {
                       <button
                         type="button"
                         disabled={!(columnMapping.article_number && columnMapping.description)}
-                        onClick={() => {
+                        onClick={async () => {
                           console.log("Confirming Mapping & Importing...");
                           
                           // Final map of all raw excel rows using selected column mapping
@@ -5288,6 +5288,7 @@ export default function DelhiStationInventoryApp() {
                             mappedItem.reorder_level = item[columnMapping.reorder_level] !== undefined && item[columnMapping.reorder_level] !== '' ? Number(item[columnMapping.reorder_level]) : 0;
                             mappedItem.max_quantity = item[columnMapping.max_quantity] !== undefined && item[columnMapping.max_quantity] !== '' ? Number(item[columnMapping.max_quantity]) : 0;
                             mappedItem.total_stock_quantity = item[columnMapping.total_stock_quantity] !== undefined && item[columnMapping.total_stock_quantity] !== '' ? Number(item[columnMapping.total_stock_quantity]) : 0;
+                            mappedItem.currentStock = mappedItem.total_stock_quantity;
                             mappedItem.order_volume = item[columnMapping.order_volume] !== undefined && item[columnMapping.order_volume] !== '' ? Number(item[columnMapping.order_volume]) : 0;
                             
                             const rawChannel = String(item[columnMapping.ordering_channel] ?? '').trim().toLowerCase();
@@ -5312,6 +5313,7 @@ export default function DelhiStationInventoryApp() {
                           const existingItemsMap = new Map(db.stockMaster.map(m => [m.article_number, m]));
                           let newCount = 0;
                           let updatedCount = 0;
+                          const itemsToSave: StockMaster[] = [];
 
                           validItems.forEach(item => {
                             let mergedItem: StockMaster;
@@ -5324,16 +5326,22 @@ export default function DelhiStationInventoryApp() {
                               existingItemsMap.set(item.article_number, mergedItem);
                               newCount++;
                             }
-                            // Save individual imported/updated items to Firestore
-                            saveStockMasterToFirestore(mergedItem).catch(err => console.error("Firestore Excel import item save error:", err));
+                            itemsToSave.push(mergedItem);
                           });
+
+                          try {
+                            // Save imported/updated items to Firebase Firestore
+                            await Promise.all(itemsToSave.map(item => saveStockMasterToFirestore(item)));
+                          } catch (err) {
+                            console.error("Firestore Excel import save error:", err);
+                          }
 
                           updateDb({ 
                             ...db, 
                             stockMaster: Array.from(existingItemsMap.values())
                           });
 
-                          alert(`Import completed successfully!\n\n• New Items Added: ${newCount}\n• Existing Items Updated: ${updatedCount}\n• Filtered out (Empty rows): ${newItems.length - validItems.length}`);
+                          alert(`Import completed successfully!\n\n• New Items Added: ${newCount}\n• Existing Items Updated: ${updatedCount}\n• Synced to Firebase Firestore\n• Filtered out (Empty rows): ${newItems.length - validItems.length}`);
 
                           // Play beep and clear import modal
                           playBeep();
