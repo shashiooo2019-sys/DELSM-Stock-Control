@@ -27,6 +27,7 @@ import {
   History,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   List,
   Sparkles,
   Clock,
@@ -239,6 +240,7 @@ export default function DelhiStationInventoryApp() {
   const [scanBoxes, setScanBoxes] = useState<number>(0);
   const [scanUnits, setScanUnits] = useState<number>(0);
   const [scannedArticle, setScannedArticle] = useState<StockMaster | null>(null);
+  const [isStocktakeLogExpanded, setIsStocktakeLogExpanded] = useState<boolean>(false);
 
   // Form states for creating/editing Article
   const [isArticleModalOpen, setIsArticleModalOpen] = useState(false);
@@ -4396,7 +4398,7 @@ export default function DelhiStationInventoryApp() {
 
                   </motion.div>
                 ) : (
-                  <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-slate-400 shadow-sm h-full flex flex-col items-center justify-center">
+                  <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-slate-400 shadow-sm min-h-[220px] flex flex-col items-center justify-center">
                     <Barcode className="w-16 h-16 text-slate-300 animate-pulse mb-3" />
                     <h3 className="font-bold text-slate-800 text-base">Awaiting Barcode Scan</h3>
                     <p className="text-xs text-slate-400 max-w-sm mt-1">
@@ -4408,47 +4410,72 @@ export default function DelhiStationInventoryApp() {
 
               {/* Log History list */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-3">
-                <h3 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-3">
-                  <History className="w-4 h-4 text-slate-500" /> Recent Stocktakes Log
-                </h3>
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h3 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <History className="w-4 h-4 text-slate-500" /> Recent Stocktakes Log
+                    <span className="text-[10px] text-slate-400 font-mono font-normal">({db.stockTakingLog.length})</span>
+                  </h3>
 
-                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                  {db.stockTakingLog.length === 0 ? (
-                    <p className="text-xs text-slate-400 text-center py-4">No count audits registered yet.</p>
-                  ) : (
-                    db.stockTakingLog.map(log => {
-                      const article = db.stockMaster.find(m => m.article_number === log.article_number);
-                      return (
-                        <div key={log.log_id} className="text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center">
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <strong className="text-slate-800">{article?.description || log.article_number}</strong>
-                              <span className="font-mono text-[9px] bg-white px-1 border border-slate-100 rounded text-slate-500">
-                                {log.article_number}
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">
-                              {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString()} • Mode: {log.input_type}
-                            </div>
-                          </div>
-                          
-                          <div className="text-right font-mono">
-                            <div>Count: <strong className="text-slate-800">{(log.actual_quantity_units ?? 0).toLocaleString()}</strong></div>
-                            <div className={`text-[10px] font-bold ${
-                              log.discrepancy_status === 'Matched' 
-                                ? 'text-emerald-600' 
-                                : log.discrepancy_status === 'Surplus' 
-                                  ? 'text-blue-600' 
-                                  : 'text-red-600'
-                            }`}>
-                              {log.discrepancy_units === 0 ? "Matched" : log.discrepancy_units > 0 ? `+${log.discrepancy_units}` : log.discrepancy_units}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
+                  <button
+                    onClick={() => setIsStocktakeLogExpanded(!isStocktakeLogExpanded)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold transition cursor-pointer select-none"
+                    title={isStocktakeLogExpanded ? "Collapse Stocktakes Log" : "Expand Stocktakes Log"}
+                  >
+                    <Menu className="w-4 h-4 text-slate-700" />
+                    <span>{isStocktakeLogExpanded ? "Collapse" : "Expand"}</span>
+                    {isStocktakeLogExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                  </button>
                 </div>
+
+                {isStocktakeLogExpanded ? (
+                  <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 transition-all duration-200">
+                    {db.stockTakingLog.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-4">No count audits registered yet.</p>
+                    ) : (
+                      db.stockTakingLog.map(log => {
+                        const article = db.stockMaster.find(m => m.article_number === log.article_number);
+                        return (
+                          <div key={log.log_id} className="text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <strong className="text-slate-800">{article?.description || log.article_number}</strong>
+                                <span className="font-mono text-[9px] bg-white px-1 border border-slate-100 rounded text-slate-500">
+                                  {log.article_number}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString()} • Mode: {log.input_type}
+                              </div>
+                            </div>
+                            
+                            <div className="text-right font-mono">
+                              <div>Count: <strong className="text-slate-800">{(log.actual_quantity_units ?? 0).toLocaleString()}</strong></div>
+                              <div className={`text-[10px] font-bold ${
+                                log.discrepancy_status === 'Matched' 
+                                  ? 'text-emerald-600' 
+                                  : log.discrepancy_status === 'Surplus' 
+                                    ? 'text-blue-600' 
+                                    : 'text-red-600'
+                              }`}>
+                                {log.discrepancy_units === 0 ? "Matched" : log.discrepancy_units > 0 ? `+${log.discrepancy_units}` : log.discrepancy_units}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 py-1">
+                    <span className="italic">{db.stockTakingLog.length} recent audit log entry{db.stockTakingLog.length === 1 ? '' : 's'} recorded.</span>
+                    <button
+                      onClick={() => setIsStocktakeLogExpanded(true)}
+                      className="text-amber-600 hover:text-amber-700 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Menu className="w-3.5 h-3.5" /> Show Log
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
