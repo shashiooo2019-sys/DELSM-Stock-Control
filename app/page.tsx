@@ -1,7 +1,5 @@
 'use client';
 
-/* eslint-disable react-hooks/preserve-manual-memoization */
-
 import React, { useState, useEffect, useMemo, useRef } from 'react'; /* TEST */
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -648,11 +646,45 @@ export default function DelhiStationInventoryApp() {
       [articleNumber]: updatedRowEdits
     }));
 
-    if ((gridAutoSave || autoSaveImmediate) && article) {
+    if (autoSaveImmediate && article) {
       const merged = { ...article, ...updatedRowEdits };
       merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
       const estimatedUsage = merged.estimated_monthly_usage || 0;
       merged.dailyBurn = estimatedUsage / 30;
+
+      let nextLogs = [...db.stockTakingLog];
+      let logToSave: StockTakingLog | null = null;
+
+      const newStockValue = Number(updatedRowEdits.currentStock);
+      if (updatedRowEdits.currentStock !== undefined && !isNaN(newStockValue)) {
+        const dailyBurn = calculateDailyBurnRate(merged.estimated_monthly_usage);
+        const expected = getExpectedStock(
+          article.article_number,
+          simulatedDate,
+          db.stockTakingLog,
+          db.stockMaster,
+          dailyBurn
+        );
+        const discrepancy = newStockValue - expected;
+        const status = discrepancy === 0 ? 'Matched' : discrepancy > 0 ? 'Surplus' : 'Deficit';
+
+        const newLog: StockTakingLog = {
+          log_id: createId('LOG'),
+          article_number: article.article_number,
+          timestamp: new Date(simulatedDate + 'T12:00:00Z').toISOString(),
+          input_type: 'Smallest Unit',
+          input_count: newStockValue,
+          actual_quantity_units: newStockValue,
+          expected_quantity_units: expected,
+          discrepancy_units: discrepancy,
+          discrepancy_status: status
+        };
+
+        nextLogs = [newLog, ...nextLogs];
+        logToSave = newLog;
+        merged.total_stock_quantity = newStockValue;
+      }
+
       const stock = merged.currentStock ?? 0;
       const reorder = merged.reorder_level ?? 0;
       const minQ = merged.min_quantity ?? 0;
@@ -668,10 +700,17 @@ export default function DelhiStationInventoryApp() {
       const nextMaster = db.stockMaster.map(item =>
         item.article_number === articleNumber ? merged : item
       );
-      updateDb({ ...db, stockMaster: nextMaster });
+      updateDb({ ...db, stockMaster: nextMaster, stockTakingLog: nextLogs });
+      
       saveStockMasterToFirestore(merged).catch(err => {
         console.error("Firestore grid auto-save error:", err);
       });
+
+      if (logToSave) {
+        saveStockLogToFirestore(logToSave).catch(err => {
+          console.error("Firestore log auto-save error:", err);
+        });
+      }
     }
   };
 
@@ -683,6 +722,40 @@ export default function DelhiStationInventoryApp() {
     merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
     const estimatedUsage = merged.estimated_monthly_usage || 0;
     merged.dailyBurn = estimatedUsage / 30;
+
+    let nextLogs = [...db.stockTakingLog];
+    let logToSave: StockTakingLog | null = null;
+
+    const newStockValue = Number(rowEdit.currentStock);
+    if (rowEdit.currentStock !== undefined && !isNaN(newStockValue)) {
+      const dailyBurn = calculateDailyBurnRate(merged.estimated_monthly_usage);
+      const expected = getExpectedStock(
+        article.article_number,
+        simulatedDate,
+        db.stockTakingLog,
+        db.stockMaster,
+        dailyBurn
+      );
+      const discrepancy = newStockValue - expected;
+      const status = discrepancy === 0 ? 'Matched' : discrepancy > 0 ? 'Surplus' : 'Deficit';
+
+      const newLog: StockTakingLog = {
+        log_id: createId('LOG'),
+        article_number: article.article_number,
+        timestamp: new Date(simulatedDate + 'T12:00:00Z').toISOString(),
+        input_type: 'Smallest Unit',
+        input_count: newStockValue,
+        actual_quantity_units: newStockValue,
+        expected_quantity_units: expected,
+        discrepancy_units: discrepancy,
+        discrepancy_status: status
+      };
+
+      nextLogs = [newLog, ...nextLogs];
+      logToSave = newLog;
+      merged.total_stock_quantity = newStockValue;
+    }
+
     const stock = merged.currentStock ?? 0;
     const reorder = merged.reorder_level ?? 0;
     const minQ = merged.min_quantity ?? 0;
@@ -698,10 +771,13 @@ export default function DelhiStationInventoryApp() {
     const nextMaster = db.stockMaster.map(item =>
       item.article_number === article.article_number ? merged : item
     );
-    updateDb({ ...db, stockMaster: nextMaster });
+    updateDb({ ...db, stockMaster: nextMaster, stockTakingLog: nextLogs });
 
     try {
       await saveStockMasterToFirestore(merged);
+      if (logToSave) {
+        await saveStockLogToFirestore(logToSave);
+      }
       setGridEdits(prev => {
         const copy = { ...prev };
         delete copy[article.article_number];
@@ -733,7 +809,9 @@ export default function DelhiStationInventoryApp() {
 
     try {
       let nextMaster = [...db.stockMaster];
+      let nextLogs = [...db.stockTakingLog];
       const savedList: StockMaster[] = [];
+      const logsToSave: StockTakingLog[] = [];
 
       for (const artNum of modifiedArticles) {
         const original = nextMaster.find(a => a.article_number === artNum);
@@ -743,6 +821,37 @@ export default function DelhiStationInventoryApp() {
           merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
           const estimatedUsage = merged.estimated_monthly_usage || 0;
           merged.dailyBurn = estimatedUsage / 30;
+
+          const newStockValue = Number(edits.currentStock);
+          if (edits.currentStock !== undefined && !isNaN(newStockValue)) {
+            const dailyBurn = calculateDailyBurnRate(merged.estimated_monthly_usage);
+            const expected = getExpectedStock(
+              original.article_number,
+              simulatedDate,
+              db.stockTakingLog,
+              db.stockMaster,
+              dailyBurn
+            );
+            const discrepancy = newStockValue - expected;
+            const status = discrepancy === 0 ? 'Matched' : discrepancy > 0 ? 'Surplus' : 'Deficit';
+
+            const newLog: StockTakingLog = {
+              log_id: createId('LOG'),
+              article_number: original.article_number,
+              timestamp: new Date(simulatedDate + 'T12:00:00Z').toISOString(),
+              input_type: 'Smallest Unit',
+              input_count: newStockValue,
+              actual_quantity_units: newStockValue,
+              expected_quantity_units: expected,
+              discrepancy_units: discrepancy,
+              discrepancy_status: status
+            };
+
+            nextLogs = [newLog, ...nextLogs];
+            logsToSave.push(newLog);
+            merged.total_stock_quantity = newStockValue;
+          }
+
           const stock = merged.currentStock ?? 0;
           const reorder = merged.reorder_level ?? 0;
           const minQ = merged.min_quantity ?? 0;
@@ -760,9 +869,12 @@ export default function DelhiStationInventoryApp() {
         }
       }
 
-      updateDb({ ...db, stockMaster: nextMaster });
+      updateDb({ ...db, stockMaster: nextMaster, stockTakingLog: nextLogs });
 
-      await Promise.all(savedList.map(item => saveStockMasterToFirestore(item)));
+      await Promise.all([
+        ...savedList.map(item => saveStockMasterToFirestore(item)),
+        ...logsToSave.map(log => saveStockLogToFirestore(log))
+      ]);
 
       setGridEdits({});
       playBeep();
