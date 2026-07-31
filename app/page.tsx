@@ -204,7 +204,13 @@ export default function DelhiStationInventoryApp() {
   };
 
   // Simulation Date & Scenario Offset
-  const [simulatedDate, setSimulatedDate] = useState<string>('2026-07-20');
+  const [simulatedDate, setSimulatedDate] = useState<string>(() => {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  });
   const [scenarioDaysOffset, setScenarioDaysOffset] = useState<number>(0);
   const [isProjDateModalOpen, setIsProjDateModalOpen] = useState(false);
   const [pendingProjDate, setPendingProjDate] = useState<string>('');
@@ -2265,7 +2271,24 @@ export default function DelhiStationInventoryApp() {
               {/* Informative stats bar */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1 text-xs">
                 <div className="bg-slate-50/50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
-                  <span className="text-slate-400 font-medium">Projected Date:</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">Baseline / Projected Date:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const today = new Date();
+                        const yyyy = today.getFullYear();
+                        const mm = String(today.getMonth() + 1).padStart(2, '0');
+                        const dd = String(today.getDate()).padStart(2, '0');
+                        setSimulatedDate(`${yyyy}-${mm}-${dd}`);
+                        setScenarioDaysOffset(0);
+                      }}
+                      className="text-[10px] bg-amber-100 hover:bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded font-bold transition cursor-pointer"
+                      title="Reset baseline simulation date to Today's date"
+                    >
+                      Reset to Today
+                    </button>
+                  </div>
                   <input
                     type="date"
                     value={(() => {
@@ -2286,6 +2309,12 @@ export default function DelhiStationInventoryApp() {
                     className="font-bold text-slate-800 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 mt-1 focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer w-full shadow-sm hover:border-slate-300 transition"
                     title="Edit projected date directly (will prompt and clear values)"
                   />
+                  <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
+                    <span>Baseline: <strong className="font-mono text-slate-700">{simulatedDate}</strong></span>
+                    {scenarioDaysOffset > 0 && (
+                      <span className="text-amber-600 font-bold">+{scenarioDaysOffset} days offset</span>
+                    )}
+                  </div>
                 </div>
                 <div className="bg-slate-50/50 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
                   <span className="text-slate-400">Items Below Lead Time Buffer:</span>
