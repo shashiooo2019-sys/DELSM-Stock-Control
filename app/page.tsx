@@ -225,7 +225,7 @@ export default function DelhiStationInventoryApp() {
   const [collapsedLocations, setCollapsedLocations] = useState<Record<string, boolean>>({});
 
   // Quick Excel Grid Editing States
-  const [gridEdits, setGridEdits] = useState<Record<string, Partial<StockMaster>>>({});
+  const [gridEdits, setGridEdits] = useState<Record<string, Partial<StockMaster> & { recordedDate?: string }>>({});
   const [gridAutoSave, setGridAutoSave] = useState<boolean>(true);
   const [gridSavedToast, setGridSavedToast] = useState<string | null>(null);
   const [gridSaveError, setGridSaveError] = useState<string | null>(null);
@@ -682,16 +682,23 @@ export default function DelhiStationInventoryApp() {
       'reorder_level',
       'max_quantity',
       'lead_time_days',
-      'currentStock'
+      'currentStock',
+      'total_stock_quantity'
     ].includes(field as string)) {
       const parsed = parseFloat(rawValue);
       value = isNaN(parsed) ? 0 : parsed;
     }
 
-    const updatedRowEdits = {
+    const updatedRowEdits: Partial<StockMaster> & { recordedDate?: string } = {
       ...(gridEdits[articleNumber] || {}),
       [field]: value
     };
+
+    if (field === 'currentStock') {
+      updatedRowEdits.total_stock_quantity = value;
+    } else if (field === 'total_stock_quantity') {
+      updatedRowEdits.currentStock = value;
+    }
 
     setGridEdits(prev => ({
       ...prev,
@@ -699,7 +706,15 @@ export default function DelhiStationInventoryApp() {
     }));
 
     if (autoSaveImmediate && article) {
-      const merged = { ...article, ...updatedRowEdits };
+      const merged: StockMaster = { ...article, ...updatedRowEdits };
+      const newStockValue = updatedRowEdits.currentStock !== undefined 
+        ? Number(updatedRowEdits.currentStock)
+        : updatedRowEdits.total_stock_quantity !== undefined 
+          ? Number(updatedRowEdits.total_stock_quantity)
+          : Number(merged.currentStock ?? merged.total_stock_quantity ?? 0);
+
+      merged.currentStock = newStockValue;
+      merged.total_stock_quantity = newStockValue;
       merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
       const estimatedUsage = merged.estimated_monthly_usage || 0;
       merged.dailyBurn = estimatedUsage / 30;
@@ -707,12 +722,26 @@ export default function DelhiStationInventoryApp() {
       let nextLogs = [...db.stockTakingLog];
       let logToSave: StockTakingLog | null = null;
 
-      const newStockValue = Number(updatedRowEdits.currentStock);
-      if (updatedRowEdits.currentStock !== undefined && !isNaN(newStockValue)) {
+      const artLogs = db.stockTakingLog
+        .filter(log => log.article_number === article.article_number)
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      
+      const defaultDate = artLogs.length > 0 
+        ? artLogs[0].timestamp.split('T')[0] 
+        : simulatedDate;
+
+      const recordedDate = updatedRowEdits.recordedDate !== undefined 
+        ? updatedRowEdits.recordedDate 
+        : defaultDate;
+
+      const isDateEdited = updatedRowEdits.recordedDate !== undefined;
+      const isStockEdited = updatedRowEdits.currentStock !== undefined || updatedRowEdits.total_stock_quantity !== undefined;
+
+      if (isStockEdited || isDateEdited) {
         const dailyBurn = calculateDailyBurnRate(merged.estimated_monthly_usage);
         const expected = getExpectedStock(
           article.article_number,
-          simulatedDate,
+          recordedDate,
           db.stockTakingLog,
           db.stockMaster,
           dailyBurn
@@ -723,7 +752,7 @@ export default function DelhiStationInventoryApp() {
         const newLog: StockTakingLog = {
           log_id: createId('LOG'),
           article_number: article.article_number,
-          timestamp: new Date(simulatedDate + 'T12:00:00Z').toISOString(),
+          timestamp: new Date(recordedDate + 'T12:00:00Z').toISOString(),
           input_type: 'Smallest Unit',
           input_count: newStockValue,
           actual_quantity_units: newStockValue,
@@ -734,7 +763,6 @@ export default function DelhiStationInventoryApp() {
 
         nextLogs = [newLog, ...nextLogs];
         logToSave = newLog;
-        merged.total_stock_quantity = newStockValue;
       }
 
       const stock = merged.currentStock ?? 0;
@@ -770,7 +798,15 @@ export default function DelhiStationInventoryApp() {
     const rowEdit = gridEdits[article.article_number];
     if (!rowEdit || Object.keys(rowEdit).length === 0) return;
 
-    const merged = { ...article, ...rowEdit };
+    const merged: StockMaster = { ...article, ...rowEdit };
+    const newStockValue = rowEdit.currentStock !== undefined 
+      ? Number(rowEdit.currentStock) 
+      : rowEdit.total_stock_quantity !== undefined 
+        ? Number(rowEdit.total_stock_quantity) 
+        : Number(merged.currentStock ?? merged.total_stock_quantity ?? 0);
+
+    merged.currentStock = newStockValue;
+    merged.total_stock_quantity = newStockValue;
     merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
     const estimatedUsage = merged.estimated_monthly_usage || 0;
     merged.dailyBurn = estimatedUsage / 30;
@@ -778,12 +814,26 @@ export default function DelhiStationInventoryApp() {
     let nextLogs = [...db.stockTakingLog];
     let logToSave: StockTakingLog | null = null;
 
-    const newStockValue = Number(rowEdit.currentStock);
-    if (rowEdit.currentStock !== undefined && !isNaN(newStockValue)) {
+    const artLogs = db.stockTakingLog
+      .filter(log => log.article_number === article.article_number)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    
+    const defaultDate = artLogs.length > 0 
+      ? artLogs[0].timestamp.split('T')[0] 
+      : simulatedDate;
+
+    const recordedDate = rowEdit.recordedDate !== undefined 
+      ? rowEdit.recordedDate 
+      : defaultDate;
+
+    const isDateEdited = rowEdit.recordedDate !== undefined;
+    const isStockEdited = rowEdit.currentStock !== undefined || rowEdit.total_stock_quantity !== undefined;
+
+    if (isStockEdited || isDateEdited) {
       const dailyBurn = calculateDailyBurnRate(merged.estimated_monthly_usage);
       const expected = getExpectedStock(
         article.article_number,
-        simulatedDate,
+        recordedDate,
         db.stockTakingLog,
         db.stockMaster,
         dailyBurn
@@ -794,7 +844,7 @@ export default function DelhiStationInventoryApp() {
       const newLog: StockTakingLog = {
         log_id: createId('LOG'),
         article_number: article.article_number,
-        timestamp: new Date(simulatedDate + 'T12:00:00Z').toISOString(),
+        timestamp: new Date(recordedDate + 'T12:00:00Z').toISOString(),
         input_type: 'Smallest Unit',
         input_count: newStockValue,
         actual_quantity_units: newStockValue,
@@ -805,10 +855,9 @@ export default function DelhiStationInventoryApp() {
 
       nextLogs = [newLog, ...nextLogs];
       logToSave = newLog;
-      merged.total_stock_quantity = newStockValue;
     }
 
-    const stock = merged.currentStock ?? 0;
+    const stock = merged.currentStock;
     const reorder = merged.reorder_level ?? 0;
     const minQ = merged.min_quantity ?? 0;
 
@@ -873,17 +922,39 @@ export default function DelhiStationInventoryApp() {
         const original = nextMaster.find(a => a.article_number === artNum);
         if (original) {
           const edits = gridEdits[artNum];
-          const merged = { ...original, ...edits };
+          const merged: StockMaster = { ...original, ...edits };
+          const newStockValue = edits.currentStock !== undefined 
+            ? Number(edits.currentStock)
+            : edits.total_stock_quantity !== undefined 
+              ? Number(edits.total_stock_quantity)
+              : Number(merged.currentStock ?? merged.total_stock_quantity ?? 0);
+
+          merged.currentStock = newStockValue;
+          merged.total_stock_quantity = newStockValue;
           merged.total_units_per_pack = (merged.boxes_per_pack || 1) * (merged.units_per_box || 1);
           const estimatedUsage = merged.estimated_monthly_usage || 0;
           merged.dailyBurn = estimatedUsage / 30;
 
-          const newStockValue = Number(edits.currentStock);
-          if (edits.currentStock !== undefined && !isNaN(newStockValue)) {
+          const artLogs = db.stockTakingLog
+            .filter(log => log.article_number === original.article_number)
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          
+          const defaultDate = artLogs.length > 0 
+            ? artLogs[0].timestamp.split('T')[0] 
+            : simulatedDate;
+
+          const recordedDate = edits.recordedDate !== undefined 
+            ? edits.recordedDate 
+            : defaultDate;
+
+          const isDateEdited = edits.recordedDate !== undefined;
+          const isStockEdited = edits.currentStock !== undefined || edits.total_stock_quantity !== undefined;
+
+          if (isStockEdited || isDateEdited) {
             const dailyBurn = calculateDailyBurnRate(merged.estimated_monthly_usage);
             const expected = getExpectedStock(
               original.article_number,
-              simulatedDate,
+              recordedDate,
               db.stockTakingLog,
               db.stockMaster,
               dailyBurn
@@ -894,7 +965,7 @@ export default function DelhiStationInventoryApp() {
             const newLog: StockTakingLog = {
               log_id: createId('LOG'),
               article_number: original.article_number,
-              timestamp: new Date(simulatedDate + 'T12:00:00Z').toISOString(),
+              timestamp: new Date(recordedDate + 'T12:00:00Z').toISOString(),
               input_type: 'Smallest Unit',
               input_count: newStockValue,
               actual_quantity_units: newStockValue,
@@ -905,7 +976,6 @@ export default function DelhiStationInventoryApp() {
 
             nextLogs = [newLog, ...nextLogs];
             logsToSave.push(newLog);
-            merged.total_stock_quantity = newStockValue;
           }
 
           const stock = merged.currentStock ?? 0;
@@ -1000,7 +1070,7 @@ export default function DelhiStationInventoryApp() {
     });
   };
 
-  const handleConfirmDeletion = () => {
+  const handleConfirmDeletion = async () => {
     const { type, id } = confirmDeleteModal;
     if (type === 'article') {
       const articleNumber = id;
@@ -1009,9 +1079,15 @@ export default function DelhiStationInventoryApp() {
       const nextPOs = db.purchaseOrders.filter(po => po.article_number !== articleNumber);
 
       if (articleNumber) {
-        deleteStockMasterFromFirestore(articleNumber);
-        db.stockTakingLog.filter(log => log.article_number === articleNumber).forEach(l => deleteStockLogFromFirestore(l.log_id));
-        db.purchaseOrders.filter(po => po.article_number === articleNumber).forEach(p => deletePurchaseOrderFromFirestore(p.po_number));
+        try {
+          await deleteStockMasterFromFirestore(articleNumber);
+          const logsToDelete = db.stockTakingLog.filter(log => log.article_number === articleNumber);
+          await Promise.all(logsToDelete.map(l => deleteStockLogFromFirestore(l.log_id)));
+          const posToDelete = db.purchaseOrders.filter(po => po.article_number === articleNumber);
+          await Promise.all(posToDelete.map(p => deletePurchaseOrderFromFirestore(p.po_number)));
+        } catch (err) {
+          console.error("Error deleting article from Firestore:", err);
+        }
       }
 
       updateDb({
@@ -1030,13 +1106,15 @@ export default function DelhiStationInventoryApp() {
       const nextLogs = db.stockTakingLog.filter(log => !selectedArticleNumbers.includes(log.article_number));
       const nextPOs = db.purchaseOrders.filter(po => !selectedArticleNumbers.includes(po.article_number));
 
-      selectedArticleNumbers.forEach(artNum => {
-        if (artNum) {
-          deleteStockMasterFromFirestore(artNum);
-          db.stockTakingLog.filter(log => log.article_number === artNum).forEach(l => deleteStockLogFromFirestore(l.log_id));
-          db.purchaseOrders.filter(po => po.article_number === artNum).forEach(p => deletePurchaseOrderFromFirestore(p.po_number));
-        }
-      });
+      try {
+        await Promise.all(selectedArticleNumbers.map(artNum => deleteStockMasterFromFirestore(artNum)));
+        const logsToDelete = db.stockTakingLog.filter(log => selectedArticleNumbers.includes(log.article_number));
+        await Promise.all(logsToDelete.map(l => deleteStockLogFromFirestore(l.log_id)));
+        const posToDelete = db.purchaseOrders.filter(po => selectedArticleNumbers.includes(po.article_number));
+        await Promise.all(posToDelete.map(p => deletePurchaseOrderFromFirestore(p.po_number)));
+      } catch (err) {
+        console.error("Error bulk deleting articles from Firestore:", err);
+      }
 
       updateDb({
         stockMaster: nextMaster,
@@ -1061,6 +1139,12 @@ export default function DelhiStationInventoryApp() {
     }
 
     let nextMaster = [...db.stockMaster];
+    const stockVal = (articleForm.currentStock !== undefined && articleForm.currentStock !== null && !isNaN(Number(articleForm.currentStock)))
+      ? Number(articleForm.currentStock)
+      : (articleForm.total_stock_quantity !== undefined && articleForm.total_stock_quantity !== null && !isNaN(Number(articleForm.total_stock_quantity)))
+        ? Number(articleForm.total_stock_quantity)
+        : 0;
+
     const finalArticle: StockMaster = {
       ...articleForm,
       units_per_box: Number(articleForm.units_per_box) || 1,
@@ -1069,11 +1153,26 @@ export default function DelhiStationInventoryApp() {
       min_quantity: Number(articleForm.min_quantity) || 0,
       reorder_level: Number(articleForm.reorder_level) || 0,
       max_quantity: Number(articleForm.max_quantity) || 0,
-      total_stock_quantity: Number(articleForm.total_stock_quantity) || 0,
+      total_stock_quantity: stockVal,
+      currentStock: stockVal,
       order_frequency_days: Number(articleForm.order_frequency_days) || 30,
       order_volume: Number(articleForm.order_volume) || 10,
       lead_time_days: Number(articleForm.lead_time_days) || 5,
     };
+
+    const newLog: StockTakingLog = {
+      log_id: createId('LOG'),
+      article_number: finalArticle.article_number,
+      timestamp: new Date(simulatedDate + 'T12:00:00Z').toISOString(),
+      input_type: 'Smallest Unit',
+      input_count: stockVal,
+      actual_quantity_units: stockVal,
+      expected_quantity_units: stockVal,
+      discrepancy_units: 0,
+      discrepancy_status: 'Matched'
+    };
+
+    let nextLogs = [newLog, ...db.stockTakingLog];
 
     if (editingArticle) {
       nextMaster = nextMaster.map(item => item.article_number === editingArticle.article_number ? finalArticle : item);
@@ -1088,11 +1187,13 @@ export default function DelhiStationInventoryApp() {
     try {
       // Prioritize saving to Firestore first
       await saveStockMasterToFirestore(finalArticle);
+      await saveStockLogToFirestore(newLog);
       
       // Update local state only after successful Firestore save
       updateDb({
         ...db,
-        stockMaster: nextMaster
+        stockMaster: nextMaster,
+        stockTakingLog: nextLogs
       });
       
       setIsArticleModalOpen(false);
@@ -4654,13 +4755,14 @@ export default function DelhiStationInventoryApp() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold">
-                      <th className="p-3 w-[120px]">Article #</th>
-                      <th className="p-3 min-w-[200px]">Description</th>
-                      <th className="p-3 w-[130px]">Location</th>
-                      <th className="p-3 min-w-[200px]">Quantity Details</th>
-                      <th className="p-3 w-[160px]">Current Stock (Units)</th>
-                      <th className="p-3 w-[110px] text-right">Daily Burn</th>
-                      <th className="p-3 min-w-[150px] text-right">Extrapolated Status</th>
+                      <th className="p-3 w-[100px]">Article #</th>
+                      <th className="p-3 min-w-[150px]">Description</th>
+                      <th className="p-3 w-[100px]">Location</th>
+                      <th className="p-3 min-w-[150px]">Quantity Details</th>
+                      <th className="p-3 w-[130px]">Stocktake Date</th>
+                      <th className="p-3 w-[150px]">Stock on Date</th>
+                      <th className="p-3 w-[80px] text-right">Daily Burn</th>
+                      <th className="p-3 min-w-[180px] text-right">Extrapolated Status (Today)</th>
                       <th className="p-3 w-[90px] text-right">Actions</th>
                     </tr>
                   </thead>
@@ -4679,7 +4781,7 @@ export default function DelhiStationInventoryApp() {
                       if (filtered.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={8} className="p-8 text-center text-slate-400">
+                            <td colSpan={9} className="p-8 text-center text-slate-400">
                               No matching items found for &quot;{scannerGridSearchQuery}&quot;.
                             </td>
                           </tr>
@@ -4693,11 +4795,29 @@ export default function DelhiStationInventoryApp() {
                         const desc = rowEdit.description !== undefined ? rowEdit.description : article.description;
                         const loc = rowEdit.location !== undefined ? rowEdit.location : article.location;
                         const qtySpec = rowEdit.quantity_details !== undefined ? rowEdit.quantity_details : article.quantity_details;
-                        const stock = rowEdit.currentStock !== undefined ? rowEdit.currentStock : article.currentStock;
 
-                        // Dynamic cover cover
-                        const daysCover = article.dailyBurn > 0 ? (stock || 0) / article.dailyBurn : 999;
-                        const isBelowLead = article.dailyBurn > 0 && daysCover <= (article.lead_time_days || 0);
+                        // Retrieve the default/current date for this stock recorded
+                        const defaultDate = article.estimation?.lastCountDateStr || simulatedDate;
+                        const recordedDate = rowEdit.recordedDate !== undefined 
+                          ? rowEdit.recordedDate 
+                          : defaultDate;
+                        
+                        // Retrieve the physical count at that date
+                        const stockOnRecordDate = rowEdit.currentStock !== undefined 
+                          ? Number(rowEdit.currentStock) 
+                          : (article.estimation?.lastCountQuantity || 0);
+
+                        // Calculate days elapsed from the recorded date to simulatedDate (today's system date)
+                        const recTime = new Date(recordedDate + 'T12:00:00Z').getTime();
+                        const simTime = new Date(simulatedDate + 'T12:00:00Z').getTime();
+                        const daysElapsed = Math.max(0, (simTime - recTime) / (1000 * 60 * 60 * 24));
+
+                        // Extrapolate current stock as of today (simulatedDate)
+                        const projectedToday = Math.max(0, Math.round(stockOnRecordDate - (daysElapsed * article.dailyBurn)));
+
+                        // Days left calculated from today's date
+                        const daysCoverToday = article.dailyBurn > 0 ? projectedToday / article.dailyBurn : 999;
+                        const isBelowLeadToday = article.dailyBurn > 0 && daysCoverToday <= (article.lead_time_days || 0);
 
                         return (
                           <tr key={article.article_number} className="hover:bg-slate-50/50 transition">
@@ -4749,10 +4869,20 @@ export default function DelhiStationInventoryApp() {
                             </td>
 
                             <td className="p-3">
+                              <input
+                                type="date"
+                                value={recordedDate}
+                                onChange={(e) => handleGridCellChange(article.article_number, 'recordedDate', e.target.value)}
+                                onBlur={() => gridAutoSave && handleSaveGridRow(article)}
+                                className="w-full bg-amber-50/20 hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-200/20 rounded px-2 py-1 font-mono text-xs text-slate-800 outline-none transition"
+                              />
+                            </td>
+
+                            <td className="p-3">
                               <div className="flex items-center gap-1.5">
                                 <input
                                   type="number"
-                                  value={stock ?? 0}
+                                  value={stockOnRecordDate}
                                   onChange={(e) => handleGridCellChange(article.article_number, 'currentStock', e.target.value)}
                                   onBlur={() => gridAutoSave && handleSaveGridRow(article)}
                                   className="w-20 bg-amber-50/30 hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-200/20 rounded px-2 py-1 font-mono text-xs font-bold text-slate-900 outline-none text-right transition"
@@ -4768,13 +4898,16 @@ export default function DelhiStationInventoryApp() {
                             <td className="p-3 text-right">
                               {article.dailyBurn > 0 ? (
                                 <div className="flex flex-col items-end">
+                                  <span className="font-mono text-[10px] text-slate-500 mb-0.5">
+                                    Today: <strong className="text-slate-900">{projectedToday.toLocaleString()}</strong> units
+                                  </span>
                                   <span className={`font-mono font-bold text-xs ${
-                                    isBelowLead ? 'text-red-600 animate-pulse' : 'text-slate-800'
+                                    isBelowLeadToday ? 'text-red-600 animate-pulse' : 'text-slate-800'
                                   }`}>
-                                    {daysCover.toFixed(1)} Days left
+                                    {daysCoverToday.toFixed(1)} Days left
                                   </span>
                                   <span className="text-[9px] text-slate-400">
-                                    {isBelowLead ? `🚨 Risk (Lead: ${article.lead_time_days}d)` : 'Healthy Cover'}
+                                    {isBelowLeadToday ? `🚨 Risk (Lead: ${article.lead_time_days}d)` : 'Healthy Cover'}
                                   </span>
                                 </div>
                               ) : (

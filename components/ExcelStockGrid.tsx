@@ -408,7 +408,7 @@ export function ExcelStockGrid({
   ) => {
     const desc = rowEdit.description !== undefined ? rowEdit.description : article.description;
     const loc = rowEdit.location !== undefined ? rowEdit.location : article.location;
-    const stock = rowEdit.currentStock !== undefined ? rowEdit.currentStock : article.currentStock;
+    const stock = rowEdit.currentStock !== undefined ? rowEdit.currentStock : (article.currentStock ?? article.total_stock_quantity ?? 0);
     const minQ = rowEdit.min_quantity !== undefined ? rowEdit.min_quantity : article.min_quantity;
     const reorder = rowEdit.reorder_level !== undefined ? rowEdit.reorder_level : article.reorder_level;
     const maxQ = rowEdit.max_quantity !== undefined ? rowEdit.max_quantity : article.max_quantity;

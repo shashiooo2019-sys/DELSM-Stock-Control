@@ -105,6 +105,7 @@ export interface StockMaster {
   quantity_details?: string;
   min_order_qty?: string;
   add_info?: string;
+  recordedDate?: string;
 }
 
 export interface StockTakingLog {
@@ -228,15 +229,23 @@ export function getDetailedStockEstimation(
   let lastCountQuantity: number;
   let lastCountDateStr: string;
 
+  const currentMasterStock = article.currentStock !== undefined && article.currentStock !== null && !isNaN(Number(article.currentStock))
+    ? Number(article.currentStock)
+    : (article.total_stock_quantity !== undefined && article.total_stock_quantity !== null && !isNaN(Number(article.total_stock_quantity)))
+      ? Number(article.total_stock_quantity)
+      : 0;
+
   if (articleLogs.length > 0) {
     const mostRecentLog = articleLogs[0];
-    lastCountTime = new Date(mostRecentLog.timestamp).getTime();
-    lastCountQuantity = isNaN(mostRecentLog.actual_quantity_units) ? 0 : mostRecentLog.actual_quantity_units;
+    const logTime = new Date(mostRecentLog.timestamp).getTime();
+    lastCountTime = !isNaN(logTime) ? logTime : baseDate.getTime();
+    lastCountQuantity = isNaN(mostRecentLog.actual_quantity_units) ? currentMasterStock : mostRecentLog.actual_quantity_units;
     lastCountDateStr = mostRecentLog.timestamp.split('T')[0];
   } else {
-    lastCountTime = new Date("2026-07-01T00:00:00Z").getTime();
-    lastCountQuantity = !isNaN(article.total_stock_quantity) ? article.total_stock_quantity : 0;
-    lastCountDateStr = "2026-07-01";
+    // When no logs exist, current stock from master stock IS the baseline count as of targetDateStr
+    lastCountTime = baseDate.getTime();
+    lastCountQuantity = currentMasterStock;
+    lastCountDateStr = targetDateStr;
   }
 
   const validTarget = isNaN(effectiveTargetTime) ? Date.now() : effectiveTargetTime;
@@ -393,18 +402,26 @@ export function loadDatabase() {
   const isInitialized = localStorage.getItem('delhi_stock_initialized') === 'true';
 
   let parsedStockMaster: StockMaster[] = stockMaster ? JSON.parse(stockMaster) : (isInitialized ? [] : INITIAL_STOCK_MASTER);
-  parsedStockMaster = parsedStockMaster.map(item => ({
-    ...item,
-    total_stock_quantity: item.total_stock_quantity ?? 0,
-    min_quantity: item.min_quantity ?? 0,
-    reorder_level: item.reorder_level ?? 0,
-    max_quantity: item.max_quantity ?? 0,
-    estimated_monthly_usage: item.estimated_monthly_usage ?? 0,
-    quantity_details: item.quantity_details ?? '',
-    min_order_qty: item.min_order_qty ?? '',
-    add_info: item.add_info ?? '',
-    ordering_channel: (item.ordering_channel as string) === 'Imported - Germany/Switzerland' ? 'Central Ordering Team' : item.ordering_channel
-  }));
+  parsedStockMaster = parsedStockMaster.map(item => {
+    const stock = (item.currentStock !== undefined && item.currentStock !== null && !isNaN(Number(item.currentStock)))
+      ? Number(item.currentStock)
+      : (item.total_stock_quantity !== undefined && item.total_stock_quantity !== null && !isNaN(Number(item.total_stock_quantity)))
+        ? Number(item.total_stock_quantity)
+        : 0;
+    return {
+      ...item,
+      total_stock_quantity: stock,
+      currentStock: stock,
+      min_quantity: item.min_quantity ?? 0,
+      reorder_level: item.reorder_level ?? 0,
+      max_quantity: item.max_quantity ?? 0,
+      estimated_monthly_usage: item.estimated_monthly_usage ?? 0,
+      quantity_details: item.quantity_details ?? '',
+      min_order_qty: item.min_order_qty ?? '',
+      add_info: item.add_info ?? '',
+      ordering_channel: (item.ordering_channel as string) === 'Imported - Germany/Switzerland' ? 'Central Ordering Team' : item.ordering_channel
+    };
+  });
 
   const parsedLogs: StockTakingLog[] = stockTakingLog ? JSON.parse(stockTakingLog) : (isInitialized ? [] : INITIAL_STOCK_TAKING_LOG);
   const sanitizedLogs = parsedLogs.map(log => ({
@@ -521,6 +538,7 @@ export async function saveStockMasterToFirestore(item: StockMaster) {
 
 export async function deleteStockMasterFromFirestore(articleNumber: string) {
   try {
+    if (!articleNumber) return;
     if (typeof window !== 'undefined' && !auth.currentUser) {
       try {
         await signInAnonymously(auth);
@@ -528,8 +546,16 @@ export async function deleteStockMasterFromFirestore(articleNumber: string) {
         console.warn('Anonymous auth before Firestore delete failed:', authErr);
       }
     }
-    const docRef = doc(firestoreDb, 'stockMaster', safeDocId(articleNumber));
-    await deleteDoc(docRef);
+    const cleanId = articleNumber.trim();
+    const safeId = safeDocId(cleanId);
+    
+    await deleteDoc(doc(firestoreDb, 'stockMaster', safeId));
+    if (safeId !== cleanId) {
+      await deleteDoc(doc(firestoreDb, 'stockMaster', cleanId)).catch(() => {});
+    }
+    if (safeDocId(articleNumber) !== safeId) {
+      await deleteDoc(doc(firestoreDb, 'stockMaster', safeDocId(articleNumber))).catch(() => {});
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, 'stockMaster/' + articleNumber);
   }
@@ -650,7 +676,7 @@ export function subscribeToDatabase(
   let currentPOs: PurchaseOrder[] = initialLocal.purchaseOrders;
 
   let stockMasterLoaded = false;
-  let isFirestoreInitialized = typeof window !== 'undefined' && localStorage.setItem('delhi_stock_initialized', 'true') !== undefined;
+  let isFirestoreInitialized = typeof window !== 'undefined' && localStorage.getItem('delhi_stock_initialized') === 'true';
 
   const unsubMeta = onSnapshot(doc(firestoreDb, 'appMeta', 'init'), (docSnap) => {
     if (docSnap.exists()) {
@@ -680,17 +706,11 @@ export function subscribeToDatabase(
       if (!isFirestoreInitialized) {
         isFirestoreInitialized = true;
         if (typeof window !== 'undefined') localStorage.setItem('delhi_stock_initialized', 'true');
-        const initialMaster = initialLocal.stockMaster.length > 0 ? initialLocal.stockMaster : INITIAL_STOCK_MASTER;
+        const initialMaster = INITIAL_STOCK_MASTER;
         seedInitialFirestoreData(initialMaster);
         currentStockMaster = initialMaster;
       } else {
-        if (initialLocal.stockMaster.length > 0) {
-          console.log("Firestore stockMaster is empty, backfilling from local storage items...");
-          seedInitialFirestoreData(initialLocal.stockMaster);
-          currentStockMaster = initialLocal.stockMaster;
-        } else {
-          currentStockMaster = [];
-        }
+        currentStockMaster = [];
       }
     } else {
       isFirestoreInitialized = true;
@@ -720,7 +740,7 @@ export function subscribeToDatabase(
       if (!isFirestoreInitialized) {
         currentLogs = INITIAL_STOCK_TAKING_LOG;
       } else {
-        currentLogs = initialLocal.stockTakingLog.length > 0 ? initialLocal.stockTakingLog : [];
+        currentLogs = [];
       }
     } else {
       const firestoreLogs = snapshot.docs.map(d => d.data() as StockTakingLog);
@@ -738,7 +758,7 @@ export function subscribeToDatabase(
       if (!isFirestoreInitialized) {
         currentPOs = INITIAL_PURCHASE_ORDERS;
       } else {
-        currentPOs = initialLocal.purchaseOrders.length > 0 ? initialLocal.purchaseOrders : [];
+        currentPOs = [];
       }
     } else {
       const firestorePOs = snapshot.docs.map(d => d.data() as PurchaseOrder);
