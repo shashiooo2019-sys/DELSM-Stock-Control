@@ -48,6 +48,7 @@ export interface ExcelStockGridProps {
   handleBulkApplyLocation: (loc: string) => void;
   onExitGridMode?: () => void;
   viewOnly?: boolean;
+  compact?: boolean;
 }
 
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
@@ -71,6 +72,34 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   smallest_unit_name: 105,
   add_info: 180,
   actions: 100,
+};
+
+const COMPACT_COLUMN_WIDTHS: Record<string, number> = {
+  checkbox: 30,
+  article_number: 80,
+  description: 150,
+  location: 80,
+  quantity_details: 100,
+  min_order_qty: 80,
+  currentStock: 80,
+  daysStockLeft: 70,
+  min_quantity: 60,
+  reorder_level: 60,
+  max_quantity: 60,
+  estimated_monthly_usage: 70,
+  barcode: 80,
+  ordering_channel: 80,
+  lead_time_days: 60,
+  boxes_per_pack: 50,
+  units_per_box: 50,
+  smallest_unit_name: 60,
+  add_info: 100,
+  actions: 60,
+};
+
+const getColumnWidth = (key: string, compact?: boolean) => {
+  const widths = compact ? COMPACT_COLUMN_WIDTHS : DEFAULT_COLUMN_WIDTHS;
+  return widths[key] || 100;
 };
 
 // Quantity Details is placed BEFORE currentStock, followed by Stock Days Left
@@ -122,7 +151,8 @@ export function ExcelStockGrid({
   handleDiscardAllGridEdits,
   handleBulkApplyLocation,
   onExitGridMode,
-  viewOnly = false
+  viewOnly = false,
+  compact = false
 }: ExcelStockGridProps) {
   // Column Widths State with LocalStorage Persistence
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
@@ -136,7 +166,7 @@ export function ExcelStockGrid({
         console.error(e);
       }
     }
-    return DEFAULT_COLUMN_WIDTHS;
+    return compact ? COMPACT_COLUMN_WIDTHS : DEFAULT_COLUMN_WIDTHS;
   });
 
   // Column Order State with LocalStorage Persistence
@@ -220,7 +250,7 @@ export function ExcelStockGrid({
     e.preventDefault();
     e.stopPropagation();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const startWidth = columnWidths[colKey] || DEFAULT_COLUMN_WIDTHS[colKey] || 100;
+    const startWidth = columnWidths[colKey] || getColumnWidth(colKey, compact);
     setResizingCol(colKey);
 
     const handleMove = (moveEvent: MouseEvent | TouchEvent) => {
@@ -301,7 +331,7 @@ export function ExcelStockGrid({
   };
 
   const handleResetLayout = () => {
-    setColumnWidths(DEFAULT_COLUMN_WIDTHS);
+    setColumnWidths(compact ? COMPACT_COLUMN_WIDTHS : DEFAULT_COLUMN_WIDTHS);
     setColumnOrder(DEFAULT_COLUMN_ORDER);
     try {
       localStorage.removeItem('excel_grid_col_widths');
@@ -317,11 +347,11 @@ export function ExcelStockGrid({
     columnOrder.forEach((colKey) => {
       if (FROZEN_KEYS.includes(colKey)) {
         map[colKey] = currentLeft;
-        currentLeft += columnWidths[colKey] || DEFAULT_COLUMN_WIDTHS[colKey] || 100;
+        currentLeft += columnWidths[colKey] || getColumnWidth(colKey, compact);
       }
     });
     return map;
-  }, [freezeDescription, columnOrder, columnWidths]);
+  }, [freezeDescription, columnOrder, columnWidths, compact]);
 
   // Find the rightmost frozen column key in current columnOrder
   const lastFrozenColKey = useMemo(() => {
@@ -486,9 +516,9 @@ export function ExcelStockGrid({
 
           if (isBelowLead) {
             return (
-              <div className="animate-flash-red text-[10px] font-black px-2 py-0.5 rounded text-white shadow-xs flex items-center justify-between font-mono w-full">
+              <div className="animate-pulse bg-red-100 text-red-700 font-black text-[12px] px-2 py-1 rounded shadow-inner flex items-center justify-between font-mono w-full">
                 <span>🚨 {daysCover.toFixed(1)}d</span>
-                <span className="text-[9px] font-bold uppercase">&le; {lead}d Lead</span>
+                <span className="text-[9px] uppercase font-bold">&le; {lead}d Lead</span>
               </div>
             );
           }
@@ -1082,7 +1112,7 @@ export function ExcelStockGrid({
           <thead className="sticky top-0 z-30 bg-slate-100 text-slate-700 text-[11px] uppercase tracking-wider font-bold border-b border-slate-300 shadow-2xs">
             <tr>
               {columnOrder.map((colKey) => {
-                const width = columnWidths[colKey] || DEFAULT_COLUMN_WIDTHS[colKey] || 100;
+                const width = columnWidths[colKey] || getColumnWidth(colKey, compact);
                 const isFrozen = freezeDescription && FROZEN_KEYS.includes(colKey);
                 const leftPos = isFrozen ? frozenLeftMap[colKey] : undefined;
                 const isFrozenEdge = freezeDescription && colKey === lastFrozenColKey;
@@ -1184,7 +1214,7 @@ export function ExcelStockGrid({
                     className={`transition ${rowBgClass} hover:bg-amber-100/60`}
                   >
                     {columnOrder.map((colKey) => {
-                      const width = columnWidths[colKey] || DEFAULT_COLUMN_WIDTHS[colKey] || 100;
+                      const width = columnWidths[colKey] || getColumnWidth(colKey, compact);
                       const isFrozen = freezeDescription && FROZEN_KEYS.includes(colKey);
                       const leftPos = isFrozen ? frozenLeftMap[colKey] : undefined;
                       const isFrozenEdge = freezeDescription && colKey === lastFrozenColKey;

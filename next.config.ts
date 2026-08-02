@@ -25,6 +25,9 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'recharts'],
+  },
   transpilePackages: ['motion'],
 };
 

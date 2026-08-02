@@ -1,16 +1,27 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react'; /* TEST */
+import dynamic from 'next/dynamic';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import PublicSearch from '@/components/PublicSearch';
-import GoogleWorkspaceModal from '@/components/GoogleWorkspaceModal';
-import EditArticleModal from '@/components/EditArticleModal';
-import DeleteConfirmModal from '@/components/DeleteConfirmModal';
-import ManualPOModal from '@/components/ManualPOModal';
-import { ExcelStockGrid } from '@/components/ExcelStockGrid';
-import AnalyticsTab from '@/components/AnalyticsTab';
+import { StockGrid } from '@/components/StockGrid';
+
+const AnalyticsTab = dynamic(() => import('@/components/AnalyticsTab'), {
+  loading: () => <div className="p-8 text-center text-slate-500 font-medium animate-pulse">Loading Analytics Dashboard...</div>,
+  ssr: false,
+});
+
+const ExcelStockGrid = dynamic(() => import('@/components/ExcelStockGrid').then(mod => mod.ExcelStockGrid), {
+  loading: () => <div className="p-8 text-center text-slate-500 font-medium animate-pulse">Loading Excel Grid View...</div>,
+  ssr: false,
+});
+
+const GoogleWorkspaceModal = dynamic(() => import('@/components/GoogleWorkspaceModal'), { ssr: false });
+const EditArticleModal = dynamic(() => import('@/components/EditArticleModal'), { ssr: false });
+const DeleteConfirmModal = dynamic(() => import('@/components/DeleteConfirmModal'), { ssr: false });
+const ManualPOModal = dynamic(() => import('@/components/ManualPOModal'), { ssr: false });
 import {
   Package,
   Barcode,
@@ -221,7 +232,7 @@ export default function DelhiStationInventoryApp() {
   const [channelFilter, setChannelFilter] = useState<'All' | 'Central' | 'Local'>('All');
   const [stockFilter, setStockFilter] = useState<'All' | 'Healthy' | 'Low' | 'Action Needed' | 'Suppressed' | 'Below Lead Days'>('All');
   const [locationFilter, setLocationFilter] = useState<string>('All');
-  const [stockViewMode, setStockViewMode] = useState<'table' | 'grouped' | 'gridEdit' | 'spreadsheetView'>('spreadsheetView');
+  const [stockViewMode, setStockViewMode] = useState<'table' | 'grouped' | 'gridEdit' | 'spreadsheetView' | 'grid' | 'gridCompact'>('spreadsheetView');
   const [collapsedLocations, setCollapsedLocations] = useState<Record<string, boolean>>({});
 
   // Quick Excel Grid Editing States
@@ -3556,6 +3567,30 @@ export default function DelhiStationInventoryApp() {
                   >
                     <MapPin className="w-3.5 h-3.5 text-slate-500" /> Group by Location
                   </button>
+
+                  <button
+                    onClick={() => setStockViewMode('grid')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                      stockViewMode === 'grid'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'text-slate-500 hover:text-blue-700 hover:bg-blue-50/50'
+                    }`}
+                    title="Grid View"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5 text-slate-500" /> Grid
+                  </button>
+
+                  <button
+                    onClick={() => setStockViewMode('gridCompact')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                      stockViewMode === 'gridCompact'
+                        ? 'bg-blue-800 text-white shadow-xs'
+                        : 'text-slate-500 hover:text-blue-900 hover:bg-blue-100/50'
+                    }`}
+                    title="Grid Compact View"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5 text-slate-500" /> Grid Compact
+                  </button>
                 </div>
               </div>
             </div>
@@ -3659,6 +3694,12 @@ export default function DelhiStationInventoryApp() {
                 handleBulkApplyLocation={handleBulkApplyLocation}
                 onExitGridMode={() => setStockViewMode('table')}
                 viewOnly={stockViewMode === 'spreadsheetView'}
+              />
+            ) : stockViewMode === 'grid' || stockViewMode === 'gridCompact' ? (
+              <StockGrid
+                filteredArticles={filteredArticles}
+                compact={stockViewMode === 'gridCompact'}
+                onExitGridMode={() => setStockViewMode('table')}
               />
             ) : stockViewMode === 'grouped' ? (
               <div className="space-y-6">
@@ -4015,7 +4056,7 @@ export default function DelhiStationInventoryApp() {
                                     <div className="text-[11px] text-slate-500 flex items-center gap-1 flex-wrap mt-0.5">
                                       <span>Est. Coverage:</span>
                                       {article.estimation.isBelowLeadTime ? (
-                                        <span className="animate-flash-red text-[10px] font-black px-1.5 py-0.5 rounded text-white font-mono flex items-center gap-0.5">
+                                        <span className="animate-flash-red-text text-[14px] font-black px-2 py-1 rounded font-mono flex items-center gap-0.5 w-fit">
                                           🚨 {article.estimation.daysStockLeft} Days (&le; {article.lead_time_days}d Lead)
                                         </span>
                                       ) : (
@@ -4048,7 +4089,7 @@ export default function DelhiStationInventoryApp() {
                             </td>
                             <td className="p-4">
                               {article.estimation.isBelowLeadTime ? (
-                                <span className="animate-flash-red text-[10px] font-black px-1.5 py-0.5 rounded text-white font-mono flex items-center gap-0.5 w-fit">
+                                <span className="animate-flash-red-text text-[10px] font-black px-1.5 py-0.5 rounded font-mono flex items-center gap-0.5 w-fit">
                                   🚨 {article.estimation.daysStockLeft} Days
                                 </span>
                               ) : (
