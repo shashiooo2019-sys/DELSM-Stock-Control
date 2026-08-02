@@ -1632,6 +1632,185 @@ export default function DelhiStationInventoryApp() {
     document.body.removeChild(link);
   };
 
+  const handleDownloadPOTemplate = () => {
+    const csvContent = [
+      'PO Number,Article Number,Order Quantity,Order Date,Expected Delivery Date,Status,Approval Date',
+      'PO-2026-001,100101,120,2026-08-01,2026-08-06,Raised,',
+      'PO-2026-002,100102,50,2026-08-01,2026-08-08,Approved,2026-08-01'
+    ].join('\n');
+
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "Purchase_Orders_Import_Template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handlePOExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json<any>(ws, { header: 1 });
+
+        if (data.length > 0) {
+          const rawHeaders = (data[0] as string[]).map(h => String(h).trim());
+          const rows = data.slice(1).filter((r: any) => r.some((cell: any) => cell !== null && cell !== ''));
+          
+          const headersMap: string[] = [];
+          const rowsObjects: any[] = [];
+
+          rawHeaders.forEach((h, idx) => {
+            if (h) headersMap.push(h);
+          });
+
+          rows.forEach((row: any) => {
+            const obj: any = {};
+            rawHeaders.forEach((h, idx) => {
+              if (h) obj[h] = row[idx];
+            });
+            rowsObjects.push(obj);
+          });
+
+          setPoExcelHeaders(headersMap);
+          setPoImportedData(rowsObjects);
+
+          // Auto map columns
+          const autoMap: Record<string, string> = {};
+          headersMap.forEach(h => {
+            const lower = h.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (lower.includes('article') || lower.includes('itemno') || lower.includes('sku')) {
+              autoMap.article_number = h;
+            } else if (lower.includes('ponumber') || lower.includes('poid') || lower.includes('orderno')) {
+              autoMap.po_number = h;
+            } else if (lower.includes('quantity') || lower.includes('qty') || lower.includes('units')) {
+              autoMap.order_quantity_units = h;
+            } else if (lower.includes('orderdate') || lower.includes('placedate')) {
+              autoMap.order_date = h;
+            } else if (lower.includes('expected') || lower.includes('deliverydate') || lower.includes('expdate')) {
+              autoMap.expected_delivery_date = h;
+            } else if (lower.includes('status') || lower.includes('state')) {
+              autoMap.status = h;
+            } else if (lower.includes('approvaldate') || lower.includes('approveddate')) {
+              autoMap.approval_date = h;
+            }
+          });
+
+          setPoColumnMapping(autoMap);
+        }
+      } catch (err) {
+        console.error('Error reading PO spreadsheet:', err);
+        alert('Failed to parse the file. Please ensure it is a valid CSV or Excel file.');
+      }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  };
+
+  const handleConfirmPOImport = () => {
+    if (!poColumnMapping.article_number) {
+      alert('Please map the Article Number column.');
+      return;
+    }
+
+    const newPOs: PurchaseOrder[] = [];
+    let importedCount = 0;
+
+    poImportedData.forEach((row, index) => {
+      const articleNumRaw = row[poColumnMapping.article_number];
+      if (!articleNumRaw) return;
+
+      const articleNum = String(articleNumRaw).trim();
+      const matchedArticle = db.stockMaster.find(m => m.article_number === articleNum);
+
+      let poNum = row[poColumnMapping.po_number] ? String(row[poColumnMapping.po_number]).trim() : '';
+      if (!poNum) {
+        poNum = `PO-IMP-${Date.now().toString().slice(-4)}-${index + 1}`;
+      }
+
+      const qtyRaw = row[poColumnMapping.order_quantity_units];
+      let qty = parseInt(String(qtyRaw || ''), 10);
+      if (isNaN(qty) || qty <= 0) {
+        qty = matchedArticle ? matchedArticle.order_volume : 100;
+      }
+
+      const orderDateRaw = row[poColumnMapping.order_date];
+      const orderDate = orderDateRaw ? String(orderDateRaw).trim() : simulatedDate;
+
+      const leadTime = matchedArticle ? matchedArticle.lead_time_days : 5;
+      let expDate = row[poColumnMapping.expected_delivery_date] ? String(row[poColumnMapping.expected_delivery_date]).trim() : '';
+      if (!expDate) {
+        const d = new Date(orderDate + 'T00:00:00');
+        if (!isNaN(d.getTime())) {
+          d.setDate(d.getDate() + leadTime);
+          expDate = d.toISOString().split('T')[0];
+        } else {
+          expDate = simulatedDate;
+        }
+      }
+
+      const statusRaw = row[poColumnMapping.status] ? String(row[poColumnMapping.status]).trim() : 'Raised';
+      const validStatuses: POStatus[] = ['Raised', 'Approved', 'Received', 'Rejected', 'Pending'];
+      const status: POStatus = validStatuses.find(s => s.toLowerCase() === statusRaw.toLowerCase()) || 'Raised';
+
+      const approvalDateRaw = row[poColumnMapping.approval_date];
+      const approvalDate = approvalDateRaw ? String(approvalDateRaw).trim() : (status === 'Approved' ? orderDate : undefined);
+
+      const poObj: PurchaseOrder = {
+        po_number: poNum,
+        article_number: articleNum,
+        order_quantity_units: qty,
+        lead_time_days: leadTime,
+        order_date: orderDate,
+        expected_delivery_date: expDate,
+        status: status,
+        approval_date: approvalDate
+      };
+
+      newPOs.push(poObj);
+      importedCount++;
+    });
+
+    if (newPOs.length === 0) {
+      alert('No valid purchase order rows found in the uploaded file.');
+      return;
+    }
+
+    // Merge or replace existing POs by PO number
+    const updatedPOsMap = new Map<string, PurchaseOrder>();
+    db.purchaseOrders.forEach(p => updatedPOsMap.set(p.po_number, p));
+    newPOs.forEach(p => updatedPOsMap.set(p.po_number, p));
+
+    const updatedPOsList = Array.from(updatedPOsMap.values());
+
+    updateDb({
+      ...db,
+      purchaseOrders: updatedPOsList
+    });
+
+    // Save imported POs to Firestore
+    newPOs.forEach(p => {
+      savePurchaseOrderToFirestore(p).catch(err => console.error('Firestore save PO import error:', err));
+    });
+
+    playBeep();
+    setIsPOImportModalOpen(false);
+    setPoImportedData([]);
+    setPoExcelHeaders([]);
+    setPoColumnMapping({});
+
+    alert(`Successfully imported/updated ${importedCount} purchase orders.`);
+  };
+
   const handlePOStateChange = (po: PurchaseOrder, newStatus: POStatus) => {
     let updatedPO = { ...po, status: newStatus };
     if (newStatus === 'Approved') {
@@ -5470,59 +5649,118 @@ export default function DelhiStationInventoryApp() {
                         onClick={async () => {
                           console.log("Confirming Mapping & Importing...");
                           
-                          // Final map of all raw excel rows using selected column mapping
-                          const newItems = importedData.map(item => {
-                            const mappedItem: any = {};
-                            mappedItem.article_number = String(item[columnMapping.article_number] ?? '').trim();
-                            mappedItem.description = String(item[columnMapping.description] ?? '').trim();
-                            mappedItem.barcode = String(item[columnMapping.barcode] ?? '').trim();
-                            mappedItem.smallest_unit_name = String(item[columnMapping.smallest_unit_name] || 'Piece').trim();
-                            mappedItem.units_per_box = item[columnMapping.units_per_box] !== undefined && item[columnMapping.units_per_box] !== '' ? Number(item[columnMapping.units_per_box]) : 1;
-                            mappedItem.boxes_per_pack = item[columnMapping.boxes_per_pack] !== undefined && item[columnMapping.boxes_per_pack] !== '' ? Number(item[columnMapping.boxes_per_pack]) : 1;
-                            mappedItem.estimated_monthly_usage = item[columnMapping.estimated_monthly_usage] !== undefined && item[columnMapping.estimated_monthly_usage] !== '' ? Number(item[columnMapping.estimated_monthly_usage]) : 0;
-                            mappedItem.order_frequency_days = item[columnMapping.order_frequency_days] !== undefined && item[columnMapping.order_frequency_days] !== '' ? Number(item[columnMapping.order_frequency_days]) : 30;
-                            mappedItem.min_quantity = item[columnMapping.min_quantity] !== undefined && item[columnMapping.min_quantity] !== '' ? Number(item[columnMapping.min_quantity]) : 0;
-                            mappedItem.reorder_level = item[columnMapping.reorder_level] !== undefined && item[columnMapping.reorder_level] !== '' ? Number(item[columnMapping.reorder_level]) : 0;
-                            mappedItem.max_quantity = item[columnMapping.max_quantity] !== undefined && item[columnMapping.max_quantity] !== '' ? Number(item[columnMapping.max_quantity]) : 0;
-                            mappedItem.total_stock_quantity = item[columnMapping.total_stock_quantity] !== undefined && item[columnMapping.total_stock_quantity] !== '' ? Number(item[columnMapping.total_stock_quantity]) : 0;
-                            mappedItem.currentStock = mappedItem.total_stock_quantity;
-                            mappedItem.order_volume = item[columnMapping.order_volume] !== undefined && item[columnMapping.order_volume] !== '' ? Number(item[columnMapping.order_volume]) : 0;
-                            
-                            const rawChannel = String(item[columnMapping.ordering_channel] ?? '').trim().toLowerCase();
-                            mappedItem.ordering_channel = (rawChannel.includes('central') || rawChannel.includes('import') || rawChannel.includes('team')) ? 'Central Ordering Team' : 'Local';
-                            
-                            mappedItem.lead_time_days = item[columnMapping.lead_time_days] !== undefined && item[columnMapping.lead_time_days] !== '' ? Number(item[columnMapping.lead_time_days]) : 5;
-                            mappedItem.location = String(item[columnMapping.location] ?? '').trim();
-                            mappedItem.quantity_details = String(item[columnMapping.quantity_details] ?? '').trim();
-                            mappedItem.min_order_qty = String(item[columnMapping.min_order_qty] ?? '').trim();
-                            mappedItem.add_info = String(item[columnMapping.add_info] ?? '').trim();
-                            return mappedItem;
-                          });
-
-                          // Filter out any entries that didn't map a valid article_number or description
-                          const validItems = newItems.filter(item => item.article_number !== '' && item.description !== '');
-
-                          if (validItems.length === 0) {
-                            alert("No valid items with a populated Article Number and Description were found after mapping. Please verify the columns selection.");
-                            return;
-                          }
-
                           const existingItemsMap = new Map(db.stockMaster.map(m => [m.article_number, m]));
                           let newCount = 0;
                           let updatedCount = 0;
                           const itemsToSave: StockMaster[] = [];
 
-                          validItems.forEach(item => {
+                          importedData.forEach(itemRaw => {
+                            if (!columnMapping.article_number) return;
+                            const artNum = String(itemRaw[columnMapping.article_number] ?? '').trim();
+                            if (!artNum) return;
+
+                            const isExisting = existingItemsMap.has(artNum);
+                            const existingItem = existingItemsMap.get(artNum);
+
                             let mergedItem: StockMaster;
-                            if (existingItemsMap.has(item.article_number)) {
-                              mergedItem = { ...existingItemsMap.get(item.article_number), ...item };
-                              existingItemsMap.set(item.article_number, mergedItem);
+
+                            if (isExisting && existingItem) {
+                              const updatedFields: Partial<StockMaster> = {};
+
+                              if (columnMapping.description && itemRaw[columnMapping.description] !== undefined && String(itemRaw[columnMapping.description]).trim() !== '') {
+                                updatedFields.description = String(itemRaw[columnMapping.description]).trim();
+                              }
+                              if (columnMapping.barcode && itemRaw[columnMapping.barcode] !== undefined && itemRaw[columnMapping.barcode] !== '') {
+                                updatedFields.barcode = String(itemRaw[columnMapping.barcode]).trim();
+                              }
+                              if (columnMapping.smallest_unit_name && itemRaw[columnMapping.smallest_unit_name] !== undefined && String(itemRaw[columnMapping.smallest_unit_name]).trim() !== '') {
+                                updatedFields.smallest_unit_name = String(itemRaw[columnMapping.smallest_unit_name]).trim();
+                              }
+                              if (columnMapping.units_per_box && itemRaw[columnMapping.units_per_box] !== undefined && itemRaw[columnMapping.units_per_box] !== '') {
+                                updatedFields.units_per_box = Number(itemRaw[columnMapping.units_per_box]) || 1;
+                              }
+                              if (columnMapping.boxes_per_pack && itemRaw[columnMapping.boxes_per_pack] !== undefined && itemRaw[columnMapping.boxes_per_pack] !== '') {
+                                updatedFields.boxes_per_pack = Number(itemRaw[columnMapping.boxes_per_pack]) || 1;
+                              }
+                              if (columnMapping.estimated_monthly_usage && itemRaw[columnMapping.estimated_monthly_usage] !== undefined && itemRaw[columnMapping.estimated_monthly_usage] !== '') {
+                                updatedFields.estimated_monthly_usage = Number(itemRaw[columnMapping.estimated_monthly_usage]) || 0;
+                              }
+                              if (columnMapping.order_frequency_days && itemRaw[columnMapping.order_frequency_days] !== undefined && itemRaw[columnMapping.order_frequency_days] !== '') {
+                                updatedFields.order_frequency_days = Number(itemRaw[columnMapping.order_frequency_days]) || 30;
+                              }
+                              if (columnMapping.min_quantity && itemRaw[columnMapping.min_quantity] !== undefined && itemRaw[columnMapping.min_quantity] !== '') {
+                                updatedFields.min_quantity = Number(itemRaw[columnMapping.min_quantity]) || 0;
+                              }
+                              if (columnMapping.reorder_level && itemRaw[columnMapping.reorder_level] !== undefined && itemRaw[columnMapping.reorder_level] !== '') {
+                                updatedFields.reorder_level = Number(itemRaw[columnMapping.reorder_level]) || 0;
+                              }
+                              if (columnMapping.max_quantity && itemRaw[columnMapping.max_quantity] !== undefined && itemRaw[columnMapping.max_quantity] !== '') {
+                                updatedFields.max_quantity = Number(itemRaw[columnMapping.max_quantity]) || 0;
+                              }
+                              if (columnMapping.total_stock_quantity && itemRaw[columnMapping.total_stock_quantity] !== undefined && itemRaw[columnMapping.total_stock_quantity] !== '') {
+                                const stockVal = Number(itemRaw[columnMapping.total_stock_quantity]) || 0;
+                                updatedFields.total_stock_quantity = stockVal;
+                                updatedFields.currentStock = stockVal;
+                              }
+                              if (columnMapping.order_volume && itemRaw[columnMapping.order_volume] !== undefined && itemRaw[columnMapping.order_volume] !== '') {
+                                updatedFields.order_volume = Number(itemRaw[columnMapping.order_volume]) || 0;
+                              }
+                              if (columnMapping.ordering_channel && itemRaw[columnMapping.ordering_channel] !== undefined && String(itemRaw[columnMapping.ordering_channel]).trim() !== '') {
+                                const rawChannel = String(itemRaw[columnMapping.ordering_channel]).trim().toLowerCase();
+                                updatedFields.ordering_channel = (rawChannel.includes('central') || rawChannel.includes('import') || rawChannel.includes('team')) ? 'Central Ordering Team' : 'Local';
+                              }
+                              if (columnMapping.lead_time_days && itemRaw[columnMapping.lead_time_days] !== undefined && itemRaw[columnMapping.lead_time_days] !== '') {
+                                updatedFields.lead_time_days = Number(itemRaw[columnMapping.lead_time_days]) || 5;
+                              }
+                              if (columnMapping.location && itemRaw[columnMapping.location] !== undefined && String(itemRaw[columnMapping.location]).trim() !== '') {
+                                updatedFields.location = String(itemRaw[columnMapping.location]).trim();
+                              }
+                              if (columnMapping.quantity_details && itemRaw[columnMapping.quantity_details] !== undefined && String(itemRaw[columnMapping.quantity_details]).trim() !== '') {
+                                updatedFields.quantity_details = String(itemRaw[columnMapping.quantity_details]).trim();
+                              }
+                              if (columnMapping.min_order_qty && itemRaw[columnMapping.min_order_qty] !== undefined && String(itemRaw[columnMapping.min_order_qty]).trim() !== '') {
+                                updatedFields.min_order_qty = String(itemRaw[columnMapping.min_order_qty]).trim();
+                              }
+                              if (columnMapping.add_info && itemRaw[columnMapping.add_info] !== undefined && String(itemRaw[columnMapping.add_info]).trim() !== '') {
+                                updatedFields.add_info = String(itemRaw[columnMapping.add_info]).trim();
+                              }
+
+                              mergedItem = { ...existingItem, ...updatedFields };
                               updatedCount++;
                             } else {
-                              mergedItem = item;
-                              existingItemsMap.set(item.article_number, mergedItem);
+                              const desc = columnMapping.description ? String(itemRaw[columnMapping.description] ?? '').trim() : 'Unspecified Item';
+                              if (!desc) return; // Skip invalid row missing description for new items
+
+                              const stockVal = (columnMapping.total_stock_quantity && itemRaw[columnMapping.total_stock_quantity] !== undefined && itemRaw[columnMapping.total_stock_quantity] !== '') 
+                                ? Number(itemRaw[columnMapping.total_stock_quantity]) || 0 
+                                : 0;
+
+                              mergedItem = {
+                                article_number: artNum,
+                                description: desc,
+                                barcode: columnMapping.barcode ? String(itemRaw[columnMapping.barcode] ?? '').trim() : '',
+                                smallest_unit_name: (columnMapping.smallest_unit_name && String(itemRaw[columnMapping.smallest_unit_name] ?? '').trim()) || 'Piece',
+                                units_per_box: (columnMapping.units_per_box && itemRaw[columnMapping.units_per_box] !== undefined && itemRaw[columnMapping.units_per_box] !== '') ? Number(itemRaw[columnMapping.units_per_box]) || 1 : 1,
+                                boxes_per_pack: (columnMapping.boxes_per_pack && itemRaw[columnMapping.boxes_per_pack] !== undefined && itemRaw[columnMapping.boxes_per_pack] !== '') ? Number(itemRaw[columnMapping.boxes_per_pack]) || 1 : 1,
+                                estimated_monthly_usage: (columnMapping.estimated_monthly_usage && itemRaw[columnMapping.estimated_monthly_usage] !== undefined && itemRaw[columnMapping.estimated_monthly_usage] !== '') ? Number(itemRaw[columnMapping.estimated_monthly_usage]) || 0 : 0,
+                                order_frequency_days: (columnMapping.order_frequency_days && itemRaw[columnMapping.order_frequency_days] !== undefined && itemRaw[columnMapping.order_frequency_days] !== '') ? Number(itemRaw[columnMapping.order_frequency_days]) || 30 : 30,
+                                min_quantity: (columnMapping.min_quantity && itemRaw[columnMapping.min_quantity] !== undefined && itemRaw[columnMapping.min_quantity] !== '') ? Number(itemRaw[columnMapping.min_quantity]) || 0 : 0,
+                                reorder_level: (columnMapping.reorder_level && itemRaw[columnMapping.reorder_level] !== undefined && itemRaw[columnMapping.reorder_level] !== '') ? Number(itemRaw[columnMapping.reorder_level]) || 0 : 0,
+                                max_quantity: (columnMapping.max_quantity && itemRaw[columnMapping.max_quantity] !== undefined && itemRaw[columnMapping.max_quantity] !== '') ? Number(itemRaw[columnMapping.max_quantity]) || 0 : 0,
+                                total_stock_quantity: stockVal,
+                                currentStock: stockVal,
+                                order_volume: (columnMapping.order_volume && itemRaw[columnMapping.order_volume] !== undefined && itemRaw[columnMapping.order_volume] !== '') ? Number(itemRaw[columnMapping.order_volume]) || 0 : 0,
+                                ordering_channel: (columnMapping.ordering_channel && String(itemRaw[columnMapping.ordering_channel] ?? '').trim().toLowerCase().includes('central')) ? 'Central Ordering Team' : 'Local',
+                                lead_time_days: (columnMapping.lead_time_days && itemRaw[columnMapping.lead_time_days] !== undefined && itemRaw[columnMapping.lead_time_days] !== '') ? Number(itemRaw[columnMapping.lead_time_days]) || 5 : 5,
+                                location: columnMapping.location ? String(itemRaw[columnMapping.location] ?? '').trim() : '',
+                                quantity_details: columnMapping.quantity_details ? String(itemRaw[columnMapping.quantity_details] ?? '').trim() : '',
+                                min_order_qty: columnMapping.min_order_qty ? String(itemRaw[columnMapping.min_order_qty] ?? '').trim() : '',
+                                add_info: columnMapping.add_info ? String(itemRaw[columnMapping.add_info] ?? '').trim() : '',
+                              };
                               newCount++;
                             }
+
+                            existingItemsMap.set(artNum, mergedItem);
                             itemsToSave.push(mergedItem);
                           });
 
