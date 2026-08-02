@@ -77,7 +77,8 @@ import {
   Check,
   TableProperties,
   Zap,
-  Sliders
+  Sliders,
+  Download
 } from 'lucide-react';
 import {
   StockMaster,
@@ -294,6 +295,10 @@ export default function DelhiStationInventoryApp() {
 
   // Manual PO modal and Workflow state variables
   const [isManualPOModalOpen, setIsManualPOModalOpen] = useState(false);
+  const [isPOImportModalOpen, setIsPOImportModalOpen] = useState(false);
+  const [poExcelHeaders, setPoExcelHeaders] = useState<string[]>([]);
+  const [poColumnMapping, setPoColumnMapping] = useState<Record<string, string>>({});
+  const [poImportedData, setPoImportedData] = useState<any[]>([]);
   const [isQuickOrderModalOpen, setIsQuickOrderModalOpen] = useState(false);
   const [quickOrderArticle, setQuickOrderArticle] = useState<StockMaster | null>(null);
   const [quickOrderQty, setQuickOrderQty] = useState<number>(0);
@@ -4997,23 +5002,41 @@ export default function DelhiStationInventoryApp() {
                 <h2 className="text-lg font-bold text-slate-900">Purchase Orders Workflow</h2>
                 <p className="text-xs text-slate-500">Track current ordering pipelines, lead delivery status, and historical fulfillment.</p>
               </div>
-              <button
-                onClick={() => {
-                  if (db.stockMaster.length > 0) {
-                    setManualPOForm({
-                      article_number: db.stockMaster[0].article_number,
-                      order_quantity_units: db.stockMaster[0].order_volume,
-                      lead_time_days: db.stockMaster[0].lead_time_days
-                    });
-                    setQuantityError('');
-                    setIsManualPOModalOpen(true);
-                  }
-                }}
-                className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm hover:shadow transition flex items-center gap-2 cursor-pointer self-start sm:self-auto"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Create Manual PO</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+                <button
+                  onClick={() => setIsPOImportModalOpen(true)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl shadow-sm hover:shadow transition flex items-center gap-1.5 cursor-pointer"
+                  title="Import purchase orders from CSV or Excel file"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Import POs</span>
+                </button>
+                <button
+                  onClick={handleExportCreatedPOs}
+                  className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl shadow-sm hover:shadow transition flex items-center gap-1.5 cursor-pointer"
+                  title="Export all purchase orders to CSV spreadsheet"
+                >
+                  <Download className="w-4 h-4 text-amber-400" />
+                  <span>Export POs</span>
+                </button>
+                <button
+                  onClick={() => {
+                    if (db.stockMaster.length > 0) {
+                      setManualPOForm({
+                        article_number: db.stockMaster[0].article_number,
+                        order_quantity_units: db.stockMaster[0].order_volume,
+                        lead_time_days: db.stockMaster[0].lead_time_days
+                      });
+                      setQuantityError('');
+                      setIsManualPOModalOpen(true);
+                    }
+                  }}
+                  className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm hover:shadow transition flex items-center gap-2 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create Manual PO</span>
+                </button>
+              </div>
             </div>
 
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
@@ -5531,6 +5554,215 @@ export default function DelhiStationInventoryApp() {
                         }`}
                       >
                         Yes, Confirm & Import {importedData.length} Items
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          IMPORT PURCHASE ORDERS MODAL
+          ---------------------------------------------------- */}
+      {isPOImportModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="font-bold text-base">Import Purchase Orders</h3>
+                  <p className="text-[10px] text-slate-400 font-sans">Upload a CSV or Excel spreadsheet to import or update Purchase Orders.</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsPOImportModalOpen(false);
+                  setPoImportedData([]);
+                  setPoExcelHeaders([]);
+                  setPoColumnMapping({});
+                }}
+                className="text-slate-400 hover:text-white text-xl font-bold p-1 transition cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {poImportedData.length === 0 ? (
+                /* Step 1: Upload File */
+                <div className="space-y-4">
+                  <div className="border-2 border-dashed border-slate-200 hover:border-amber-500 rounded-2xl p-8 text-center transition bg-slate-50/50 flex flex-col items-center justify-center space-y-3">
+                    <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+                      <FileSpreadsheet className="w-8 h-8" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-slate-800">Select Purchase Order Spreadsheet</h4>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 font-sans">Upload a `.csv`, `.xlsx`, or `.xls` file containing purchase order records.</p>
+                    </div>
+                    <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                      <label className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs px-4 py-2.5 rounded-lg transition shadow-sm hover:shadow cursor-pointer inline-block">
+                        Choose Spreadsheet
+                        <input 
+                          type="file" 
+                          onChange={handlePOExcelImport} 
+                          accept=".csv, .xlsx, .xls" 
+                          className="hidden" 
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleDownloadPOTemplate}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-4 py-2.5 rounded-lg transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Download Sample CSV Template</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs space-y-2">
+                    <h5 className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber-500" /> Expected Columns in Spreadsheet
+                    </h5>
+                    <p className="text-slate-600 text-[11px] leading-relaxed">
+                      Your spreadsheet should include columns for <strong>Article Number</strong> and <strong>Order Quantity</strong>. Fields like PO Number, Order Date, Expected Delivery Date, and Status are auto-matched or assigned defaults if omitted.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                /* Step 2: Mapping & Live Preview */
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  {/* Left Column Selectors */}
+                  <div className="lg:col-span-5 space-y-3 bg-slate-50/50 border border-slate-100 rounded-xl p-4 max-h-[55vh] overflow-y-auto">
+                    <div className="flex items-center justify-between border-b pb-2 mb-2">
+                      <h4 className="font-bold text-xs text-slate-700 uppercase tracking-wider">Map Columns</h4>
+                      <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold">Auto-Matched</span>
+                    </div>
+
+                    {[
+                      { key: 'article_number', label: 'Article Number *', desc: 'Must match stock master article code e.g. 100101.' },
+                      { key: 'po_number', label: 'PO Number', desc: 'Purchase order code e.g. PO-2026-001 (Auto-generated if empty).' },
+                      { key: 'order_quantity_units', label: 'Quantity (Units)', desc: 'Total ordered units.' },
+                      { key: 'order_date', label: 'Order Date', desc: 'Date placed e.g. YYYY-MM-DD.' },
+                      { key: 'expected_delivery_date', label: 'Expected Delivery Date', desc: 'Date expected e.g. YYYY-MM-DD.' },
+                      { key: 'status', label: 'Delivery Status', desc: 'Raised, Approved, Received, Rejected, Pending.' },
+                      { key: 'approval_date', label: 'Approval Date', desc: 'Date approved e.g. YYYY-MM-DD.' },
+                    ].map(field => {
+                      const isAutoMatched = !!poColumnMapping[field.key];
+                      return (
+                        <div key={field.key} className="space-y-1 bg-white p-2.5 rounded-lg border border-slate-100 shadow-3xs">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-semibold text-slate-800">{field.label}</span>
+                            {isAutoMatched && (
+                              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded font-sans">Matched</span>
+                            )}
+                          </div>
+                          <p className="text-[9px] text-slate-400 font-sans leading-tight">{field.desc}</p>
+                          <select 
+                            className="w-full border border-slate-200 p-1.5 rounded text-xs bg-slate-50 focus:bg-white transition"
+                            onChange={(e) => setPoColumnMapping({...poColumnMapping, [field.key]: e.target.value})}
+                            value={poColumnMapping[field.key] || ''}
+                          >
+                            <option value="">-- Select spreadsheet column --</option>
+                            {poExcelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Right Live Preview */}
+                  <div className="lg:col-span-7 space-y-4">
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex justify-between items-center">
+                      <div>
+                        <h4 className="font-bold text-xs text-slate-800">Spreadsheet Loaded</h4>
+                        <p className="text-[10px] text-slate-500 mt-0.5 font-sans">Found {poExcelHeaders.length} columns and {poImportedData.length} records.</p>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setPoImportedData([]);
+                          setPoExcelHeaders([]);
+                          setPoColumnMapping({});
+                        }}
+                        className="text-xs text-slate-600 hover:text-red-600 underline font-semibold cursor-pointer font-sans"
+                      >
+                        Reset File
+                      </button>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+                      <div className="bg-slate-50 px-4 py-2 border-b border-slate-200">
+                        <h4 className="font-bold text-xs text-slate-800">Preview Mapped Rows (First 3)</h4>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[10px] text-left border-collapse font-mono">
+                          <thead>
+                            <tr className="bg-slate-50/50 border-b border-slate-100 text-slate-500 uppercase">
+                              <th className="py-2 px-3">PO Number</th>
+                              <th className="py-2 px-3">Article No</th>
+                              <th className="py-2 px-3">Order Date</th>
+                              <th className="py-2 px-3">Exp. Delivery</th>
+                              <th className="py-2 px-3">Quantity</th>
+                              <th className="py-2 px-3">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {poImportedData.slice(0, 3).map((item, idx) => {
+                              const poNum = item[poColumnMapping.po_number] || '(Auto-generated)';
+                              const artNum = item[poColumnMapping.article_number];
+                              const orderDate = item[poColumnMapping.order_date] || simulatedDate;
+                              const expDate = item[poColumnMapping.expected_delivery_date] || 'Auto-calculated';
+                              const qty = item[poColumnMapping.order_quantity_units] || '100';
+                              const status = item[poColumnMapping.status] || 'Raised';
+
+                              return (
+                                <tr key={idx} className="hover:bg-slate-50/50">
+                                  <td className="py-2.5 px-3 font-bold text-indigo-600">{String(poNum)}</td>
+                                  <td className="py-2.5 px-3 font-bold text-slate-800">{artNum ? String(artNum) : <span className="text-red-500 italic">Required</span>}</td>
+                                  <td className="py-2.5 px-3 text-slate-600">{String(orderDate)}</td>
+                                  <td className="py-2.5 px-3 text-slate-600">{String(expDate)}</td>
+                                  <td className="py-2.5 px-3 font-bold text-slate-800">{String(qty)}</td>
+                                  <td className="py-2.5 px-3"><span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-sans font-bold text-[9px]">{String(status)}</span></td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 flex justify-end gap-2 text-xs border-t">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsPOImportModalOpen(false);
+                          setPoImportedData([]);
+                          setPoExcelHeaders([]);
+                          setPoColumnMapping({});
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold px-4 py-2.5 rounded-lg transition cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!poColumnMapping.article_number}
+                        onClick={handleConfirmPOImport}
+                        className={`font-bold px-6 py-2.5 rounded-lg transition shadow-sm font-sans ${
+                          poColumnMapping.article_number
+                            ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 cursor-pointer shadow-sm hover:shadow' 
+                            : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        }`}
+                      >
+                        Confirm & Import {poImportedData.length} Purchase Orders
                       </button>
                     </div>
                   </div>
