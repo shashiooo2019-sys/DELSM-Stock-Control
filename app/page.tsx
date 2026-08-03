@@ -121,7 +121,9 @@ import {
 import {
   createId,
   getPackagingBreakdown,
-  fuzzySearch
+  fuzzySearch,
+  parseAndFormatDateToDDMMMYY,
+  addDaysToDDMMMYY
 } from '@/lib/helpers';
 
 export default function DelhiStationInventoryApp() {
@@ -1635,8 +1637,8 @@ export default function DelhiStationInventoryApp() {
   const handleDownloadPOTemplate = () => {
     const csvContent = [
       'PO Number,Article Number,Order Quantity,Order Date,Expected Delivery Date,Status,Approval Date',
-      'PO-2026-001,100101,120,2026-08-01,2026-08-06,Raised,',
-      'PO-2026-002,100102,50,2026-08-01,2026-08-08,Approved,2026-08-01'
+      'PO-2026-001,100101,120,01-Aug-26,06-Aug-26,Raised,',
+      'PO-2026-002,100102,50,01-Aug-26,08-Aug-26,Approved,01-Aug-26'
     ].join('\n');
 
     const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1657,7 +1659,7 @@ export default function DelhiStationInventoryApp() {
     reader.onload = (evt) => {
       try {
         const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json<any>(ws, { header: 1 });
@@ -1744,18 +1746,16 @@ export default function DelhiStationInventoryApp() {
       }
 
       const orderDateRaw = row[poColumnMapping.order_date];
-      const orderDate = orderDateRaw ? String(orderDateRaw).trim() : simulatedDate;
+      const orderDate = parseAndFormatDateToDDMMMYY(orderDateRaw, simulatedDate);
 
       const leadTime = matchedArticle ? matchedArticle.lead_time_days : 5;
-      let expDate = row[poColumnMapping.expected_delivery_date] ? String(row[poColumnMapping.expected_delivery_date]).trim() : '';
+      const expDateRaw = row[poColumnMapping.expected_delivery_date];
+      let expDate = '';
+      if (expDateRaw !== undefined && expDateRaw !== null && String(expDateRaw).trim() !== '') {
+        expDate = parseAndFormatDateToDDMMMYY(expDateRaw);
+      }
       if (!expDate) {
-        const d = new Date(orderDate + 'T00:00:00');
-        if (!isNaN(d.getTime())) {
-          d.setDate(d.getDate() + leadTime);
-          expDate = d.toISOString().split('T')[0];
-        } else {
-          expDate = simulatedDate;
-        }
+        expDate = addDaysToDDMMMYY(orderDate, leadTime);
       }
 
       const statusRaw = row[poColumnMapping.status] ? String(row[poColumnMapping.status]).trim() : 'Raised';
@@ -1763,7 +1763,12 @@ export default function DelhiStationInventoryApp() {
       const status: POStatus = validStatuses.find(s => s.toLowerCase() === statusRaw.toLowerCase()) || 'Raised';
 
       const approvalDateRaw = row[poColumnMapping.approval_date];
-      const approvalDate = approvalDateRaw ? String(approvalDateRaw).trim() : (status === 'Approved' ? orderDate : undefined);
+      let approvalDate: string | undefined = undefined;
+      if (approvalDateRaw !== undefined && approvalDateRaw !== null && String(approvalDateRaw).trim() !== '') {
+        approvalDate = parseAndFormatDateToDDMMMYY(approvalDateRaw);
+      } else if (status === 'Approved') {
+        approvalDate = orderDate;
+      }
 
       const poObj: PurchaseOrder = {
         po_number: poNum,
@@ -5888,10 +5893,10 @@ export default function DelhiStationInventoryApp() {
                       { key: 'article_number', label: 'Article Number *', desc: 'Must match stock master article code e.g. 100101.' },
                       { key: 'po_number', label: 'PO Number', desc: 'Purchase order code e.g. PO-2026-001 (Auto-generated if empty).' },
                       { key: 'order_quantity_units', label: 'Quantity (Units)', desc: 'Total ordered units.' },
-                      { key: 'order_date', label: 'Order Date', desc: 'Date placed e.g. YYYY-MM-DD.' },
-                      { key: 'expected_delivery_date', label: 'Expected Delivery Date', desc: 'Date expected e.g. YYYY-MM-DD.' },
+                      { key: 'order_date', label: 'Order Date', desc: 'Date placed in DD-MMM-YY format e.g. 01-Aug-26.' },
+                      { key: 'expected_delivery_date', label: 'Expected Delivery Date', desc: 'Date expected in DD-MMM-YY format e.g. 06-Aug-26.' },
                       { key: 'status', label: 'Delivery Status', desc: 'Raised, Approved, Received, Rejected, Pending.' },
-                      { key: 'approval_date', label: 'Approval Date', desc: 'Date approved e.g. YYYY-MM-DD.' },
+                      { key: 'approval_date', label: 'Approval Date', desc: 'Date approved in DD-MMM-YY format e.g. 01-Aug-26.' },
                     ].map(field => {
                       const isAutoMatched = !!poColumnMapping[field.key];
                       return (
@@ -5956,8 +5961,16 @@ export default function DelhiStationInventoryApp() {
                             {poImportedData.slice(0, 3).map((item, idx) => {
                               const poNum = item[poColumnMapping.po_number] || '(Auto-generated)';
                               const artNum = item[poColumnMapping.article_number];
-                              const orderDate = item[poColumnMapping.order_date] || simulatedDate;
-                              const expDate = item[poColumnMapping.expected_delivery_date] || 'Auto-calculated';
+                              const rawOrderDate = item[poColumnMapping.order_date];
+                              const orderDate = parseAndFormatDateToDDMMMYY(rawOrderDate, simulatedDate);
+
+                              const rawExpDate = item[poColumnMapping.expected_delivery_date];
+                              const matchedArticle = db.stockMaster.find(m => m.article_number === String(artNum).trim());
+                              const leadTime = matchedArticle ? matchedArticle.lead_time_days : 5;
+                              const expDate = rawExpDate 
+                                ? parseAndFormatDateToDDMMMYY(rawExpDate) 
+                                : addDaysToDDMMMYY(orderDate, leadTime);
+
                               const qty = item[poColumnMapping.order_quantity_units] || '100';
                               const status = item[poColumnMapping.status] || 'Raised';
 
@@ -5965,8 +5978,8 @@ export default function DelhiStationInventoryApp() {
                                 <tr key={idx} className="hover:bg-slate-50/50">
                                   <td className="py-2.5 px-3 font-bold text-indigo-600">{String(poNum)}</td>
                                   <td className="py-2.5 px-3 font-bold text-slate-800">{artNum ? String(artNum) : <span className="text-red-500 italic">Required</span>}</td>
-                                  <td className="py-2.5 px-3 text-slate-600">{String(orderDate)}</td>
-                                  <td className="py-2.5 px-3 text-slate-600">{String(expDate)}</td>
+                                  <td className="py-2.5 px-3 text-slate-600 font-bold">{String(orderDate)}</td>
+                                  <td className="py-2.5 px-3 text-slate-600 font-bold">{String(expDate)}</td>
                                   <td className="py-2.5 px-3 font-bold text-slate-800">{String(qty)}</td>
                                   <td className="py-2.5 px-3"><span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-sans font-bold text-[9px]">{String(status)}</span></td>
                                 </tr>
